@@ -18,51 +18,46 @@ def get_prayer_times():
     try:
         response = requests.get(url).json()
         return response['data']['timings']
-    except Exception as e:
-        print(f"خطأ في جلب المواقيت: {e}")
-        return None
+    except: return None
 
 @bot.event
 async def on_ready():
     print(f'✅ البوت متصل ومستعد باسم: {bot.user}')
-    check_prayers.start()
+    if not check_prayers.is_running():
+        check_prayers.start()
+
+# --- أمر للتجربة الآن فوراً ---
+@bot.command()
+async def test(ctx):
+    global current_page
+    image_name = f"big-quran_compressed_page-{current_page:04d}.jpg"
+    image_path = f"images/{image_name}"
+    
+    if os.path.exists(image_path):
+        await ctx.send(content="📖 تجربة إرسال الصفحة الأولى:", file=discord.File(image_path))
+    else:
+        await ctx.send(f"❌ لم أجد الصورة في هذا المسار: {image_path}")
 
 @tasks.loop(minutes=1)
 async def check_prayers():
     global current_page
     if not CHANNEL_ID: return
-
     now = datetime.datetime.now().strftime("%H:%M")
     prayers = get_prayer_times()
-    
     if prayers:
-        target_times = {
-            'Fajr': prayers['Fajr'], 'Dhuhr': prayers['Dhuhr'],
-            'Asr': prayers['Asr'], 'Maghrib': prayers['Maghrib'], 'Isha': prayers['Isha']
-        }
-
+        target_times = {'Fajr': prayers['Fajr'], 'Dhuhr': prayers['Dhuhr'], 'Asr': prayers['Asr'], 'Maghrib': prayers['Maghrib'], 'Isha': prayers['Isha']}
         for prayer_name, prayer_time in target_times.items():
             if now == prayer_time:
                 channel = bot.get_channel(int(CHANNEL_ID))
                 if channel:
-                    pages_to_send = 6 if prayer_name == 'Fajr' else 4
+                    pages = 6 if prayer_name == 'Fajr' else 4
                     files = []
-                    for i in range(pages_to_send):
+                    for _ in range(pages):
                         if current_page > 624: current_page = 1
-                        
-                        # التعديل هنا ليناسب اسم ملفاتك الطويل
-                        image_name = f"big-quran_compressed_page-{current_page:04d}.jpg"
-                        image_path = f"images/{image_name}"
-                        
-                        if os.path.exists(image_path):
-                            files.append(discord.File(image_path))
-                        else:
-                            print(f"⚠️ لم يتم العثور على الملف: {image_path}")
-                        
+                        path = f"images/big-quran_compressed_page-{current_page:04d}.jpg"
+                        if os.path.exists(path): files.append(discord.File(path))
                         current_page += 1
-                    
-                    if files:
-                        await channel.send(content=f"📖 وردكم لصلاة {prayer_name}", files=files)
+                    if files: await channel.send(content=f"📖 ورد صلاة {prayer_name}", files=files)
                 break
 
 bot.run(TOKEN)
