@@ -1,85 +1,63 @@
 import discord
-from discord.ext import tasks, commands
-import datetime
-import requests
+from discord.ext import commands
 import os
+from flask import Flask
+from threading import Thread
 
-# --- الإعدادات (تأخذ من Render) ---
-TOKEN = os.environ.get('DISCORD_TOKEN')
-CHANNEL_ID = os.environ.get('CHANNEL_ID')
+# --- 1. خادم الويب (لحل مشكلة Port في Render ومنع النوم) ---
+app = Flask('')
 
-# إعدادات البوت الأساسية
+@app.route('/')
+def home():
+    return "✅ البوت يعمل بنجاح 24/7!"
+
+def run():
+    # Render يبحث عن هذا المنفذ (Port) تحديداً
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
+
+# --- 2. إعدادات البوت الأساسية ---
 intents = discord.Intents.default()
-intents.message_content = True
+intents.message_content = True  # تذكر تفعيلها في Discord Developer Portal
 bot = commands.Bot(command_prefix='!', intents=intents)
-
-# المتغير الذي يحدد الصفحة الحالية (سيبدأ من 1)
-current_page = 1
-
-def get_prayer_times():
-    """جلب مواقيت الصلاة لمدينة الرياض عبر API خارجي"""
-    url = "https://api.aladhan.com/v1/timingsByCity?city=Riyadh&country=Saudi+Arabia&method=4"
-    try:
-        response = requests.get(url).json()
-        return response['data']['timings']
-    except Exception as e:
-        print(f"خطأ في جلب المواقيت: {e}")
-        return None
 
 @bot.event
 async def on_ready():
-    print(f'✅ البوت متصل ومستعد باسم: {bot.user}')
-    check_prayers.start()
+    print(f'-----------------------------------')
+    print(f'✅ تم تسجيل الدخول باسم: {bot.user}')
+    print(f'✅ البوت جاهز للاستخدام!')
+    print(f'-----------------------------------')
 
-@tasks.loop(minutes=1)
-async def check_prayers():
-    global current_page
-    
-    # التأكد من وجود رقم القناة
-    if not CHANNEL_ID:
-        return
+# --- 3. أمر إرسال الصور (ترتيب) ---
+@bot.command()
+async def ترتيب(ctx, number: int):
+    try:
+        # تأكد أن مجلد الصور اسمه images وكل الصور بصيغة jpg
+        image_path = f"./images/{number}.jpg"
+        
+        if os.path.exists(image_path):
+            await ctx.send(file=discord.File(image_path))
+        else:
+            # إذا لم يجد jpg يجرب png
+            image_path = f"./images/{number}.png"
+            if os.path.exists(image_path):
+                await ctx.send(file=discord.File(image_path))
+            else:
+                await ctx.send(f"❌ لم أجد الصورة رقم ({number}) في المجلد.")
+    except Exception as e:
+        await ctx.send(f"⚠️ حدث خطأ أثناء إرسال الصورة.")
+        print(f"Error: {e}")
 
-    # التوقيت الحالي
-    now = datetime.datetime.now().strftime("%H:%M")
-    prayers = get_prayer_times()
-    
-    if prayers:
-        # قائمة الصلوات المستهدفة
-        target_times = {
-            'Fajr': prayers['Fajr'],
-            'Dhuhr': prayers['Dhuhr'],
-            'Asr': prayers['Asr'],
-            'Maghrib': prayers['Maghrib'],
-            'Isha': prayers['Isha']
-        }
+# --- 4. التشغيل ---
+keep_alive()  # تشغيل خادم الويب أولاً
 
-        # التحقق إذا كان الوقت الحالي هو وقت أذان
-        for prayer_name, prayer_time in target_times.items():
-            if now == prayer_time:
-                channel = bot.get_channel(int(CHANNEL_ID))
-                if channel:
-                    # صلاة الفجر ترسل 6 صفحات، والباقي 4 صفحات
-                    pages_to_send = 6 if prayer_name == 'Fajr' else 4
-                    
-                    files = []
-                    for i in range(pages_to_send):
-                        # العودة للصفحة الأولى إذا اكتمل الختم (624 صفحة)
-                        if current_page > 624:
-                            current_page = 1
-                        
-                        # مسار الصورة (تأكد من وجود مجلد images وصيغة jpg)
-                        image_path = f"images/{current_page}.jpg"
-                        
-                        if os.path.exists(image_path):
-                            files.append(discord.File(image_path))
-                        
-                        current_page += 1
-                    
-                    if files:
-                        await channel.send(
-                            content=f"📖 **وردكم القرآني لصلاة {prayer_name} ({pages_to_send} صفحات)**\nتقبل الله منا ومنكم صالح الأعمال.",
-                            files=files
-                        )
-                break # التوقف بعد العثور على الصلاة الحالية
-
-bot.run(TOKEN)
+# الحصول على التوكن من إعدادات Render (Environment Variables)
+token = os.environ.get('DISCORD_TOKEN')
+if token:
+    bot.run(token)
+else:
+    print("❌ خطأ: التوكن غير موجود في الإعدادات!")
