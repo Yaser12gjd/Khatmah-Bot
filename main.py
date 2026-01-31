@@ -1,64 +1,62 @@
 import discord
-from discord.ext import tasks, commands
-from discord.ui import Button, View
-import datetime
-import requests
+from discord.ext import commands
 import os
+from flask import Flask
+from threading import Thread
 
-# --- الإعدادات الأساسية ---
-TOKEN = os.environ.get('DISCORD_TOKEN')
-# تثبيت القناة لضمان عدم ضياعها عند إعادة تشغيل السيرفر المجاني
-STABLE_CHANNEL_ID = 1332768565507522580 
+# --- 1. كود فتح البوابة ومنع النوم (لحل مشكلة Render & Replit) ---
+app = Flask('')
 
+@app.route('/')
+def home():
+    return "✅ البوت يعمل بنجاح 24/7!"
+
+def run():
+    # Render يستخدم بورت 10000 افتراضياً
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
+
+# --- 2. إعدادات البوت الأساسية ---
 intents = discord.Intents.default()
-intents.message_content = True
+intents.message_content = True  # قراءة محتوى الرسائل
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# متغيرات التحكم بالصور
-current_page = 1
-total_pages = 604  # تأكد من عدد صفحات ملفك الجديد
-bot_active = True 
+@bot.event
+async def on_ready():
+    print(f'-----------------------------------')
+    print(f'✅ تم تسجيل الدخول باسم: {bot.user}')
+    print(f'✅ البوت جاهز لاستقبال الأوامر!')
+    print(f'-----------------------------------')
 
-def get_prayer_times():
-    # توقيت الرياض
-    url = "https://api.aladhan.com/v1/timingsByCity?city=Riyadh&country=Saudi+Arabia&method=4"
+# --- 3. أمر إرسال الصور (ترتيب) ---
+@bot.command()
+async def ترتيب(ctx, number: int):
     try:
-        response = requests.get(url).json()
-        return response['data']['timings']
-    except: return None
-
-# --- واجهة الاشتراك في التنبيهات ---
-class RoleView(View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(label="🔔 اشترك في التنبيهات", style=discord.ButtonStyle.success, custom_id="join_khatmah")
-    async def join_role(self, interaction: discord.Interaction, button: discord.ui.Button):
-        role = discord.utils.get(interaction.guild.roles, name="ختمة القرآن")
-        if not role:
-            role = await interaction.guild.create_role(name="ختمة القرآن", mentionable=True)
+        # البحث عن الصورة داخل مجلد images
+        # يدعم صيغ jpg و png
+        image_path = f"./images/{number}.jpg"
         
-        if role in interaction.user.roles:
-            await interaction.user.remove_roles(role)
-            await interaction.response.send_message("❌ تم إلغاء اشتراكك في التنبيهات.", ephemeral=True)
+        if not os.path.exists(image_path):
+            image_path = f"./images/{number}.png"
+
+        if os.path.exists(image_path):
+            await ctx.send(file=discord.File(image_path))
         else:
-            await interaction.user.add_roles(role)
-            await interaction.response.send_message("✅ تم اشتراكك! سيصلك منشن مع كل ورد.", ephemeral=True)
+            await ctx.send(f"❌ عذراً، لم أجد الصورة رقم ({number}) في المجلد.")
+    except Exception as e:
+        await ctx.send(f"⚠️ حدث خطأ أثناء محاولة إرسال الصورة.")
+        print(f"Error: {e}")
 
-@bot.command(name="تفعيل")
-async def setup(ctx):
-    embed = discord.Embed(title="📖 تفعيل بوت الختمة", description="اضغط على الزر أدناه للحصول على رول (ختمة القرآن) لتصلك منشنات الورد مع كل صلاة.", color=discord.Color.green())
-    await ctx.send(embed=embed, view=RoleView())
+# --- 4. تشغيل السيرفر والبوت ---
+keep_alive()
 
-@bot.command(name="ترتيب")
-async def check_order(ctx, page_num: int = None):
-    global current_page
-    target = page_num if page_num else current_page
-    # المسار المحدث بناءً على اسم الملف الجديد في مجلد images1
-    image_path = f"images1/standard39-2-1(pdfgear.com)_page-{target:04d}.jpg"
-    
-    if os.path.exists(image_path):
-        await ctx.send(content=f"🖼️ استعراض الصفحة رقم **({target})**:", file=discord.File(image_path))
-    else:
-        await
- 
+# تأكد من إضافة DISCORD_TOKEN في Environment Variables
+token = os.environ.get('DISCORD_TOKEN')
+if token:
+    bot.run(token)
+else:
+    print("❌ خطأ: لم يتم العثور على التوكن (DISCORD_TOKEN) في الإعدادات!")
