@@ -5,12 +5,12 @@ import re
 from flask import Flask
 from threading import Thread
 
-# --- 1. خادم الويب (Keep Alive) لمنع البوت من النوم في Render ---
+# --- 1. نظام منع النوم (Keep Alive) لضمان استمرار البوت في Render ---
 app = Flask('')
 
 @app.route('/')
 def home():
-    return "✅ البوت يعمل بنجاح! النطاق: من 4 إلى 607"
+    return "✅ البوت يعمل بنجاح! النطاق المعتمد: من 4 إلى 607"
 
 def run():
     # Render يستخدم المنفذ 10000 افتراضياً
@@ -30,13 +30,12 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 async def on_ready():
     print(f'-----------------------------------')
     print(f'✅ تم تسجيل الدخول باسم: {bot.user}')
-    print(f'✅ النطاق المعتمد: من 4 إلى 607')
+    print(f'✅ البوت جاهز لاستقبال الأوامر (4-607)')
     print(f'-----------------------------------')
 
-# --- 3. أمر الترتيب الذكي (يبحث عن الرقم بدقة داخل اسم الملف) ---
+# --- 3. أمر الترتيب الذكي (يبحث عن الرقم داخل أي اسم ملف) ---
 @bot.command()
 async def ترتيب(ctx, number: int):
-    # التأكد من أن الرقم بين 4 و 607
     if number < 4 or number > 607:
         await ctx.send("⚠️ الترتيب المتاح يبدأ من **4** وينتهي عند **607** فقط.")
         return
@@ -44,15 +43,15 @@ async def ترتيب(ctx, number: int):
     try:
         image_folder = "images"
         if not os.path.exists(image_folder):
-            await ctx.send("❌ مجلد images غير موجود في GitHub!")
+            await ctx.send("❌ مجلد images غير موجود في السيرفر!")
             return
 
         found = False
         target = str(number)
         
-        # البحث في جميع ملفات المجلد
+        # البحث عن الرقم ككلمة مستقلة داخل أسماء الملفات
         for filename in os.listdir(image_folder):
-            # استخدام Regex للبحث عن الرقم ككلمة مستقلة (عشان ما يرسل 44 لما تطلب 4)
+            #Regex يبحث عن الرقم بحيث لا يكون جزءاً من رقم آخر (مثلاً يجد 6 ولا يجدها داخل 66)
             if re.search(rf'(?<!\d){target}(?!\d)', filename):
                 image_path = os.path.join(image_folder, filename)
                 await ctx.send(file=discord.File(image_path))
@@ -60,15 +59,16 @@ async def ترتيب(ctx, number: int):
                 break
         
         if not found:
-            await ctx.send(f"❌ لم أجد أي صورة تحتوي على الرقم ({number}) في اسمها داخل المجلد.")
+            await ctx.send(f"❌ لم أجد أي صورة تحتوي على الرقم ({number}) في اسمها.")
             
     except Exception as e:
-        print(f"Error: {e}")
         await ctx.send(f"⚠️ حدث خطأ فني: {e}")
 
-# --- 4. أمر الفحص (للتأكد من الأسماء التي يراها البوت) ---
+# --- 4. أمر الفحص المتقدم (لحل مشكلة عدم ظهور الصور) ---
 @bot.command()
 async def فحص(ctx):
-    if os.path.exists('images'):
-        files = os.listdir('images')[:10]  # يعرض أول 10 ملفات فقط
-        await ctx.send(f"✅ المجلد موجود. عينة من الملفات: {files}")
+    path = "images"
+    if os.path.exists(path):
+        files = os.listdir(path)
+        if not files:
+            await ctx.send("⚠️ المجلد `images` موجود لكنه **فارغ تماماً**! تأكد من عمل Commit
