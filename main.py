@@ -5,21 +5,17 @@ import re
 from flask import Flask
 from threading import Thread
 
-# --- 1. نظام منع النوم (Keep Alive) لضمان استمرار البوت في Render ---
+# --- 1. خادم الويب (Keep Alive) ---
 app = Flask('')
-
 @app.route('/')
-def home():
-    return "✅ البوت يعمل بنجاح! النطاق المعتمد: من 4 إلى 607"
+def home(): return "✅ البوت يعمل! النطاق: 4 إلى 607"
 
 def run():
-    # Render يستخدم المنفذ 10000 افتراضياً
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
 def keep_alive():
-    t = Thread(target=run)
-    t.start()
+    Thread(target=run).start()
 
 # --- 2. إعدادات البوت ---
 intents = discord.Intents.default()
@@ -28,47 +24,53 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 
 @bot.event
 async def on_ready():
-    print(f'-----------------------------------')
-    print(f'✅ تم تسجيل الدخول باسم: {bot.user}')
-    print(f'✅ البوت جاهز لاستقبال الأوامر (4-607)')
-    print(f'-----------------------------------')
+    print(f'✅ متصل باسم: {bot.user}')
 
-# --- 3. أمر الترتيب الذكي (يبحث عن الرقم داخل أي اسم ملف) ---
+# --- 3. أمر الترتيب (البحث المرن) ---
 @bot.command()
 async def ترتيب(ctx, number: int):
     if number < 4 or number > 607:
-        await ctx.send("⚠️ الترتيب المتاح يبدأ من **4** وينتهي عند **607** فقط.")
+        await ctx.send("⚠️ الترتيب من 4 إلى 607 فقط.")
         return
 
-    try:
-        image_folder = "images"
-        if not os.path.exists(image_folder):
-            await ctx.send("❌ مجلد images غير موجود في السيرفر!")
-            return
+    image_folder = "images"
+    if not os.path.exists(image_folder):
+        await ctx.send("❌ لا يوجد مجلد باسم `images`. تأكد من اسم المجلد في GitHub!")
+        return
 
-        found = False
-        target = str(number)
-        
-        # البحث عن الرقم ككلمة مستقلة داخل أسماء الملفات
-        for filename in os.listdir(image_folder):
-            #Regex يبحث عن الرقم بحيث لا يكون جزءاً من رقم آخر (مثلاً يجد 6 ولا يجدها داخل 66)
-            if re.search(rf'(?<!\d){target}(?!\d)', filename):
-                image_path = os.path.join(image_folder, filename)
-                await ctx.send(file=discord.File(image_path))
-                found = True
-                break
-        
-        if not found:
-            await ctx.send(f"❌ لم أجد أي صورة تحتوي على الرقم ({number}) في اسمها.")
-            
-    except Exception as e:
-        await ctx.send(f"⚠️ حدث خطأ فني: {e}")
+    found = False
+    target = str(number)
+    
+    for filename in os.listdir(image_folder):
+        # يبحث عن الرقم ككلمة مستقلة في اسم الملف
+        if re.search(rf'(?<!\d){target}(?!\d)', filename):
+            image_path = os.path.join(image_folder, filename)
+            await ctx.send(file=discord.File(image_path))
+            found = True
+            break
+    
+    if not found:
+        await ctx.send(f"❌ لم أجد صورة تحتوي على الرقم ({number}). جرب أمر `!مجلد` للتأكد.")
 
-# --- 4. أمر الفحص المتقدم (لحل مشكلة عدم ظهور الصور) ---
+# --- 4. أمر كشف محتوى المجلد (مهم جداً الآن) ---
 @bot.command()
-async def فحص(ctx):
+async def مجلد(ctx):
     path = "images"
     if os.path.exists(path):
         files = os.listdir(path)
         if not files:
-            await ctx.send("⚠️ المجلد `images` موجود لكنه **فارغ تماماً**! تأكد من عمل Commit
+            await ctx.send("📂 المجلد موجود لكنه **فارغ**!")
+        else:
+            # يرسل أول 15 اسم ملف موجود في المجلد
+            names = "\n".join(files[:15])
+            await ctx.send(f"📂 وجدنا {len(files)} ملف. هذه أول أسماء:\n```{names}```")
+    else:
+        # إذا لم يجد مجلد images، يطبع الملفات في المجلد الرئيسي
+        main_files = os.listdir('.')
+        await ctx.send(f"❌ لم أجد مجلد `images`. الملفات في الخارج هي: `{main_files}`")
+
+# --- 5. التشغيل ---
+if __name__ == "__main__":
+    keep_alive()
+    token = os.environ.get('DISCORD_TOKEN')
+    bot.run(token)
