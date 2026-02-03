@@ -3,14 +3,16 @@ from discord.ext import commands, tasks
 import os
 import re
 import requests
-from datetime import datetime
+import datetime
+import pytz
+import asyncio
 from flask import Flask
 from threading import Thread
 
-# --- 1. نظام الحفاظ على البوت ---
+# --- 1. خادم الويب لبقاء البوت حياً (Keep Alive) ---
 app = Flask('')
 @app.route('/')
-def home(): return "✅ البوت يعمل - نظام الورد الثابت"
+def home(): return "✅ البوت يعمل بنظام الورد الجماعي الثابت وتوقيت الرياض مضبوط"
 
 def run():
     port = int(os.environ.get("PORT", 10000))
@@ -19,16 +21,19 @@ def run():
 def keep_alive():
     Thread(target=run).start()
 
-# --- 2. الإعدادات والذاكرة ---
+# --- 2. الإعدادات والذاكرة والقناة المستهدفة ---
 intents = discord.Intents.default()
 intents.message_content = True 
 bot = commands.Bot(command_prefix='!', intents=intents)
+
+# 💡 ضع هنا رقم (ID) الروم الذي تريد أن يرسل فيه البوت
+TARGET_CHANNEL_ID = 123456789012345678  # استبدل هذا الرقم بـ ID قناتك
 
 DB_FILE = "subscribers.txt"
 PAGE_FILE = "last_page.txt" 
 CITY = "Riyadh"
 COUNTRY = "Saudi Arabia"
-METHOD = 4 
+METHOD = 4 # تقويم أم القرى
 
 def get_subs():
     if not os.path.exists(DB_FILE): return set()
@@ -60,7 +65,9 @@ def get_prayer_times():
         url = f"http://api.aladhan.com/v1/timingsByCity?city={CITY}&country={COUNTRY}&method={METHOD}"
         response = requests.get(url).json()
         return response['data']['timings']
-    except: return None
+    except Exception as e:
+        print(f"خطأ في جلب المواقيت: {e}")
+        return None
 
 def find_image(number):
     image_folder = "images"
@@ -71,54 +78,60 @@ def find_image(number):
             return os.path.join(image_folder, filename)
     return None
 
-# --- 4. فحص وقت الصلاة وإرسال الصفحات ثابتة ---
-@tasks.loop(seconds=40)
+# --- 4. فحص وقت الصلاة بالمنطقة الزمنية الصحيحة ---
+@tasks.loop(seconds=30)
 async def check_prayer_time():
-    now = datetime.now().strftime("%H:%M")
+    # ضبط المنطقة الزمنية على الرياض
+    riyadh_tz = pytz.timezone('Asia/Riyadh')
+    now = datetime.datetime.now(riyadh_tz).strftime("%H:%M")
+    
     times = get_prayer_times()
     
     if times:
         prayers = {"Fajr":"الفجر", "Dhuhr":"الظهر", "Asr":"العصر", "Maghrib":"المغرب", "Isha":"العشاء"}
         for eng, arb in prayers.items():
-            if now == times[eng]:
+            # توحيد صيغة الوقت لضمان التطابق
+            p_time = datetime.datetime.strptime(times[eng], "%H:%M").strftime("%H:%M")
+            
+            if now == p_time:
                 start_p = get_last_page()
                 subs = get_subs()
                 mentions = " ".join([f"<@{s}>" for s in subs])
                 
-                for guild in bot.guilds:
-                    channel = discord.utils.get(guild.text_channels, name="القرآن") or guild.text_channels[0]
-                    if channel:
-                        end_p = min(start_p + 3, 607)
-                        await channel.send(f"🕋 **حان الآن موعد أذان {arb} بتوقيت الرياض**\n📖 وردكم الثابت: من صفحة {start_p} إلى {end_p}\n🔔 {mentions}")
-                        
-                        # إرسال الـ 4 صفحات كملفات تحت بعضها
-                        for i in range(start_p, end_p + 1):
-                            path = find_image(i)
-                            if path:
-                                await channel.send(file=discord.File(path))
-                
-                save_next_start_page(min(start_p + 3, 607))
-                import asyncio
-                await asyncio.sleep(65) 
+                channel = bot.get_channel(TARGET_CHANNEL_ID)
+                if channel:
+                    end_p = min(start_p + 3, 607)
+                    await channel.send(f"🕋 **حان الآن موعد أذان {arb} بتوقيت الرياض**\n📖 وردنا الجماعي: من صفحة {start_p} إلى {end_p}\n🔔 {mentions}")
+                    
+                    for i in range(start_p, end_p + 1):
+                        path = find_image(i)
+                        if path:
+                            await channel.send(file=discord.File(path))
+                    
+                    # حفظ الصفحة التالية للأذان القادم
+                    save_next_start_page(end_p)
+                    # الانتظار دقيقة كاملة لمنع تكرار الإرسال في نفس الدقيقة
+                    await asyncio.sleep(65)
                 break
 
 # --- 5. الأوامر ---
 @bot.event
 async def on_ready():
-    print(f'✅ البوت يعمل بنظام الصور الثابتة (4 صفحات)')
+    print(f'✅ البوت يعمل بتوقيت الرياض المعتمد')
     if not check_prayer_time.is_running():
         check_prayer_time.start()
 
 @bot.command()
 async def تفعيل(ctx):
     add_sub(ctx.author.id)
-    await ctx.send(f"✅ تم التفعيل! ستصلك الـ 4 صفحات مباشرة مع كل أذان.")
+    await ctx.send(f"✅ تم تفعيل التنبيهات لـ {ctx.author.mention}! ستصلك الصفحات الثابتة مع كل أذان.")
 
 @bot.command()
 async def تجربة(ctx):
+    """أمر للتأكد من الصور والمنشن"""
     start_p = get_last_page()
     end_p = min(start_p + 3, 607)
-    await ctx.send(f"🧪 **تجربة إرسال الورد الثابت (من {start_p} إلى {end_p})**")
+    await ctx.send(f"🧪 **تجربة إرسال الورد (من صفحة {start_p} إلى {end_p})**")
     for i in range(start_p, end_p + 1):
         path = find_image(i)
         if path:
@@ -128,7 +141,7 @@ async def تجربة(ctx):
 async def مواقيت(ctx):
     times = get_prayer_times()
     if times:
-        msg = f"🕌 **مواقيت الصلاة بالرياض:**\n🔹 الفجر: {times['Fajr']}\n🔹 الظهر: {times['Dhuhr']}\n🔹 العصر: {times['Asr']}\n🔹 المغرب: {times['Maghrib']}\n🔹 العشاء: {times['Isha']}"
+        msg = f"🕌 **مواقيت الصلاة في الرياض (أم القرى):**\n🔹 الفجر: {times['Fajr']}\n🔹 الظهر: {times['Dhuhr']}\n🔹 العصر: {times['Asr']}\n🔹 المغرب: {times['Maghrib']}\n🔹 العشاء: {times['Isha']}"
         await ctx.send(msg)
 
 if __name__ == "__main__":
