@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands, tasks
 import os
+import json
 import re
 import requests
 import datetime
@@ -9,10 +10,10 @@ import asyncio
 from flask import Flask
 from threading import Thread
 
-# --- 1. خادم الويب لبقاء البوت حياً (Keep Alive) ---
+# --- 1. خادم الويب (Keep Alive) ---
 app = Flask('')
 @app.route('/')
-def home(): return "✅ البوت يعمل بنظام الورد الجماعي الثابت وتوقيت الرياض مضبوط"
+def home(): return "✅ البوت يعمل بنظام تعدد السيرفرات المتطور"
 
 def run():
     port = int(os.environ.get("PORT", 10000))
@@ -21,19 +22,29 @@ def run():
 def keep_alive():
     Thread(target=run).start()
 
-# --- 2. الإعدادات والذاكرة والقناة المستهدفة ---
+# --- 2. الإعدادات والذاكرة ---
 intents = discord.Intents.default()
 intents.message_content = True 
+intents.members = True # مهم لجلب قائمة الأعضاء للمنشن
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# 💡 ضع هنا رقم (ID) الروم الذي تريد أن يرسل فيه البوت
-TARGET_CHANNEL_ID = 123456789012345678  # استبدل هذا الرقم بـ ID قناتك
-
 DB_FILE = "subscribers.txt"
-PAGE_FILE = "last_page.txt" 
-CITY = "Riyadh"
-COUNTRY = "Saudi Arabia"
-METHOD = 4 # تقويم أم القرى
+PAGE_FILE = "last_page.txt"
+CHANNELS_FILE = "channels.json"
+
+# دالة لجلب القنوات المحفوظة لكل سيرفر
+def load_channels():
+    if not os.path.exists(CHANNELS_FILE): return {}
+    try:
+        with open(CHANNELS_FILE, "r") as f:
+            return json.load(f)
+    except: return {}
+
+def save_channel(guild_id, channel_id):
+    channels = load_channels()
+    channels[str(guild_id)] = channel_id
+    with open(CHANNELS_FILE, "w") as f:
+        json.dump(channels, f)
 
 def get_subs():
     if not os.path.exists(DB_FILE): return set()
@@ -59,15 +70,13 @@ def save_next_start_page(last_sent):
         f.write(str(next_p))
     return next_p
 
-# --- 3. جلب المواقيت والبحث عن الصور ---
+# --- 3. جلب مواقيت الصلاة بتوقيت الرياض ---
 def get_prayer_times():
     try:
-        url = f"http://api.aladhan.com/v1/timingsByCity?city={CITY}&country={COUNTRY}&method={METHOD}"
+        url = "http://api.aladhan.com/v1/timingsByCity?city=Riyadh&country=Saudi+Arabia&method=4"
         response = requests.get(url).json()
         return response['data']['timings']
-    except Exception as e:
-        print(f"خطأ في جلب المواقيت: {e}")
-        return None
+    except: return None
 
 def find_image(number):
     image_folder = "images"
@@ -78,71 +87,70 @@ def find_image(number):
             return os.path.join(image_folder, filename)
     return None
 
-# --- 4. فحص وقت الصلاة بالمنطقة الزمنية الصحيحة ---
-@tasks.loop(seconds=30)
+# --- 4. المهمة التلقائية (الأذان لجميع السيرفرات) ---
+@tasks.loop(seconds=35)
 async def check_prayer_time():
-    # ضبط المنطقة الزمنية على الرياض
     riyadh_tz = pytz.timezone('Asia/Riyadh')
     now = datetime.datetime.now(riyadh_tz).strftime("%H:%M")
-    
     times = get_prayer_times()
     
     if times:
         prayers = {"Fajr":"الفجر", "Dhuhr":"الظهر", "Asr":"العصر", "Maghrib":"المغرب", "Isha":"العشاء"}
         for eng, arb in prayers.items():
-            # توحيد صيغة الوقت لضمان التطابق
             p_time = datetime.datetime.strptime(times[eng], "%H:%M").strftime("%H:%M")
             
             if now == p_time:
                 start_p = get_last_page()
+                end_p = min(start_p + 3, 607)
                 subs = get_subs()
-                mentions = " ".join([f"<@{s}>" for s in subs])
+                channels = load_channels() # جلب قائمة القنوات لكل السيرفرات
                 
-                channel = bot.get_channel(TARGET_CHANNEL_ID)
-                if channel:
-                    end_p = min(start_p + 3, 607)
-                    await channel.send(f"🕋 **حان الآن موعد أذان {arb} بتوقيت الرياض**\n📖 وردنا الجماعي: من صفحة {start_p} إلى {end_p}\n🔔 {mentions}")
-                    
-                    for i in range(start_p, end_p + 1):
-                        path = find_image(i)
-                        if path:
-                            await channel.send(file=discord.File(path))
-                    
-                    # حفظ الصفحة التالية للأذان القادم
-                    save_next_start_page(end_p)
-                    # الانتظار دقيقة كاملة لمنع تكرار الإرسال في نفس الدقيقة
-                    await asyncio.sleep(65)
+                # إرسال لكل سيرفر قام بضبط القناة
+                for guild_id_str, channel_id in channels.items():
+                    channel = bot.get_channel(int(channel_id))
+                    if channel:
+                        # منشن المشتركين الموجودين في هذا السيرفر فقط
+                        mentions = " ".join([f"<@{s}>" for s in subs if channel.guild.get_member(int(s))])
+                        
+                        await channel.send(f"🕋 **حان الآن موعد أذان {arb} بتوقيت الرياض**\n📖 وردنا الجماعي: صفحات {start_p} إلى {end_p}\n🔔 {mentions}")
+                        
+                        for i in range(start_p, end_p + 1):
+                            path = find_image(i)
+                            if path: await channel.send(file=discord.File(path))
+                
+                save_next_start_page(end_p)
+                await asyncio.sleep(65)
                 break
 
 # --- 5. الأوامر ---
 @bot.event
 async def on_ready():
-    print(f'✅ البوت يعمل بتوقيت الرياض المعتمد')
+    print(f'✅ البوت متصل في {len(bot.guilds)} سيرفرات')
     if not check_prayer_time.is_running():
         check_prayer_time.start()
 
 @bot.command()
+@commands.has_permissions(administrator=True)
+async def ضبط(ctx):
+    """تحديد القناة الحالية لإرسال الورد والأذان"""
+    save_channel(ctx.guild.id, ctx.channel.id)
+    await ctx.send(f"✅ تم ضبط قناة **{ctx.channel.name}** بنجاح لتكون قناة القرآن والأذان في هذا السيرفر.")
+
+@bot.command()
 async def تفعيل(ctx):
+    """تفعيل المنشن للمستخدم"""
     add_sub(ctx.author.id)
-    await ctx.send(f"✅ تم تفعيل التنبيهات لـ {ctx.author.mention}! ستصلك الصفحات الثابتة مع كل أذان.")
+    await ctx.send(f"✅ {ctx.author.mention} تم تفعيل التنبيهات لك!")
 
 @bot.command()
 async def تجربة(ctx):
-    """أمر للتأكد من الصور والمنشن"""
+    """تجربة الإرسال يدوياً"""
     start_p = get_last_page()
     end_p = min(start_p + 3, 607)
-    await ctx.send(f"🧪 **تجربة إرسال الورد (من صفحة {start_p} إلى {end_p})**")
+    await ctx.send(f"🧪 تجربة الورد لصفحات: {start_p}-{end_p}")
     for i in range(start_p, end_p + 1):
         path = find_image(i)
-        if path:
-            await ctx.send(file=discord.File(path))
-
-@bot.command()
-async def مواقيت(ctx):
-    times = get_prayer_times()
-    if times:
-        msg = f"🕌 **مواقيت الصلاة في الرياض (أم القرى):**\n🔹 الفجر: {times['Fajr']}\n🔹 الظهر: {times['Dhuhr']}\n🔹 العصر: {times['Asr']}\n🔹 المغرب: {times['Maghrib']}\n🔹 العشاء: {times['Isha']}"
-        await ctx.send(msg)
+        if path: await ctx.send(file=discord.File(path))
 
 if __name__ == "__main__":
     keep_alive()
