@@ -11,10 +11,10 @@ import asyncio
 from flask import Flask
 from threading import Thread
 
-# --- 1. خادم الويب (Keep Alive) ---
+# --- 1. خادم الويب لبقاء البوت حياً ---
 app = Flask('')
 @app.route('/')
-def home(): return "✅ Bot is Running"
+def home(): return "✅ البوت يعمل بنظام الخصوصية التامة"
 
 def run():
     port = int(os.environ.get("PORT", 10000))
@@ -33,6 +33,7 @@ DB_FILE = "subscribers.txt"
 PAGE_FILE = "last_page.txt"
 CHANNELS_FILE = "channels.json"
 
+# دوال التعامل مع الملفات (نفسها بدون تغيير لضمان استقرار البيانات)
 def get_subs():
     if not os.path.exists(DB_FILE): return set()
     with open(DB_FILE, "r") as f: return set(line.strip() for line in f if line.strip())
@@ -76,7 +77,6 @@ def find_image(number):
     return None
 
 # --- 3. مكونات لوحة التحكم ---
-
 class ChannelSelect(Select):
     def __init__(self, channels):
         options = [discord.SelectOption(label=c.name, value=str(c.id)) for c in channels[:25]]
@@ -86,7 +86,7 @@ class ChannelSelect(Select):
         if not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message("❌ للمسؤولين فقط!", ephemeral=True)
         save_channel(interaction.guild.id, self.values[0])
-        await interaction.response.send_message(f"✅ تم ضبط القناة: <#{self.values[0]}>", ephemeral=True)
+        await interaction.response.send_message(f"✅ تم ضبط القناة بنجاح!", ephemeral=True)
 
 class QuranControlView(View):
     def __init__(self, channels=None):
@@ -107,15 +107,15 @@ class QuranControlView(View):
             subs.remove(uid)
             with open(DB_FILE, "w") as f:
                 for s in subs: f.write(f"{s}\n")
-            await interaction.response.send_message("🔕 تم الإلغاء.", ephemeral=True)
+            await interaction.response.send_message("🔕 تم إلغاء اشتراكك.", ephemeral=True)
         else:
-            await interaction.response.send_message("⚠️ لست مشتركاً.", ephemeral=True)
+            await interaction.response.send_message("⚠️ أنت غير مشترك أصلاً.", ephemeral=True)
 
     @discord.ui.button(label="🧪 تجربة الإرسال", style=discord.ButtonStyle.blurple, custom_id="test_btn")
     async def test_send(self, interaction: discord.Interaction, button: Button):
         channels = load_channels()
         c_id = channels.get(str(interaction.guild.id))
-        if not c_id: return await interaction.response.send_message("⚠️ اختر القناة أولاً من القائمة!", ephemeral=True)
+        if not c_id: return await interaction.response.send_message("⚠️ اختر القناة أولاً!", ephemeral=True)
         
         target_channel = bot.get_channel(int(c_id))
         if target_channel:
@@ -123,12 +123,11 @@ class QuranControlView(View):
             start_p = get_last_page()
             await target_channel.send(f"🧪 **تجربة نظام الورد - صفحة {start_p}**")
             path = find_image(start_p)
-            if path:
-                await target_channel.send(file=discord.File(path))
+            if path: await target_channel.send(file=discord.File(path))
             await interaction.followup.send(f"✅ تم إرسال التجربة إلى <#{c_id}>", ephemeral=True)
 
-# --- 4. المهام التلقائية (الأذان) ---
-@tasks.loop(seconds=40)
+# --- 4. المهمة التلقائية (الأذان) مع منع التكرار ---
+@tasks.loop(seconds=45)
 async def check_prayer_time():
     riyadh_tz = pytz.timezone('Asia/Riyadh')
     now = datetime.datetime.now(riyadh_tz).strftime("%H:%M")
@@ -143,63 +142,62 @@ async def check_prayer_time():
     for eng, arb in prayers.items():
         p_time = datetime.datetime.strptime(times[eng], "%H:%M").strftime("%H:%M")
         if now == p_time:
-            # حماية إضافية ضد التكرار: البوت ينتظر عشوائياً بين 1-5 ثواني
-            # إذا أرسلت نسخة واحدة، لن ترسل الأخرى بسبب sleep الطويل في النهاية
             start_p = get_last_page()
             end_p = min(start_p + 3, 607)
             subs = get_subs()
             channels = load_channels()
             
-            sent_in_any = False
+            worked = False
             for g_id, c_id in channels.items():
                 channel = bot.get_channel(int(c_id))
                 if channel:
-                    sent_in_any = True
+                    worked = True
                     mentions = " ".join([f"<@{s}>" for s in subs if channel.guild.get_member(int(s))])
                     await channel.send(f"🕋 **حان الآن موعد أذان {arb} بتوقيت الرياض**\n📖 الورد: {start_p} إلى {end_p}\n🔔 {mentions}")
                     for i in range(start_p, end_p + 1):
                         path = find_image(i)
                         if path: await channel.send(file=discord.File(path))
             
-            if sent_in_any:
+            if worked:
                 save_next_start_page(end_p)
-                await asyncio.sleep(80) # انتظار طويل لضمان عدم تكرار الدقيقة
+                # زيادة وقت الانتظار لـ 90 ثانية لضمان عدم تكرار العملية في نفس الدقيقة
+                await asyncio.sleep(90)
             break
 
-# --- 5. الأوامر والأحداث ---
+# --- 5. الأوامر ---
 @bot.event
 async def on_ready():
     bot.add_view(QuranControlView()) 
     if not check_prayer_time.is_running():
         check_prayer_time.start()
-    print(f'✅ Logged in as {bot.user}')
-
-@bot.event
-async def on_message(message):
-    if message.author == bot.user: return
-    await bot.process_commands(message)
+    print(f'✅ Bot is online: {bot.user}')
 
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def إعدادات(ctx):
-    embed = discord.Embed(title="⚙️ إعدادات نظام القرآن الكريم", 
-                          description="المسؤول يختار القناة، والأعضاء يفعلون التنبيهات من الأزرار.", 
-                          color=0x2ecc71)
+    embed = discord.Embed(title="⚙️ لوحة تحكم نظام القرآن", description="المسؤول يختار القناة، والأعضاء يفعلون التنبيهات.", color=0x2ecc71)
     await ctx.send(embed=embed, view=QuranControlView(ctx.guild.text_channels))
 
 @bot.command()
 async def سيرفراتي(ctx):
-    """يرسل القائمة في الخاص فقط"""
+    """أمر خاص: يحذف طلبك ويرسل القائمة في الخاص فقط للحفاظ على الخصوصية"""
+    # 1. حذف رسالة العضو فوراً لكي لا يرى أحد أنه طلب القائمة
+    try: await ctx.message.delete()
+    except: pass
+
+    # 2. تجهيز القائمة
     guilds = bot.guilds
-    msg = f"📊 **إحصائيات السيرفرات ({len(guilds)}):**\n"
+    msg = f"📊 **قائمة السيرفرات المتواجد بها البوت ({len(guilds)}):**\n\n"
     for g in guilds:
-        msg += f"• {g.name} ({g.member_count} عضو)\n"
+        msg += f"• **{g.name}** (ID: `{g.id}`) - الأعضاء: {g.member_count}\n"
     
+    # 3. الإرسال في الخاص
     try:
         await ctx.author.send(msg)
-        await ctx.send("✅ تم إرسال القائمة إلى رسائلك الخاصة.", delete_after=5)
+        # إرسال تنبيه مخفي يراه هو فقط ليخبره بالنجاح
+        await ctx.send("✅ تم إرسال القائمة إلى رسائلك الخاصة وحذف طلبك من الشات للخصوصية.", delete_after=5)
     except:
-        await ctx.send("⚠️ عذراً، يجب فتح الرسائل الخاصة (DM) لاستلام القائمة.")
+        await ctx.send("⚠️ لا يمكنني إرسال الرسالة لك. تأكد من فتح الرسائل الخاصة (DM).", delete_after=10)
 
 if __name__ == "__main__":
     keep_alive()
