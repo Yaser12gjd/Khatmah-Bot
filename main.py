@@ -14,7 +14,7 @@ from threading import Thread
 # --- 1. خادم الويب ---
 app = Flask('')
 @app.route('/')
-def home(): return "✅ البوت يعمل بنظام لوحة التحكم"
+def home(): return "✅ البوت يعمل بنظام فصل القنوات والتجربة"
 
 def run():
     port = int(os.environ.get("PORT", 10000))
@@ -66,25 +66,23 @@ def save_next_start_page(last_sent):
     with open(PAGE_FILE, "w") as f: f.write(str(next_p))
     return next_p
 
-# --- 3. مكونات لوحة التحكم (قوائم وأزرار) ---
+# --- 3. مكونات لوحة التحكم ---
 
-# قائمة اختيار القنوات
 class ChannelSelect(Select):
     def __init__(self, channels):
         options = [
-            discord.SelectOption(label=channel.name, value=str(channel.id), description=f"ID: {channel.id}")
-            for channel in channels[:25] # ديسكورد يسمح بـ 25 خيار كحد أقصى
+            discord.SelectOption(label=channel.name, value=str(channel.id))
+            for channel in channels[:25]
         ]
-        super().__init__(placeholder="اختر القناة المخصصة للقرآن...", options=options)
+        super().__init__(placeholder="اختر القناة المخصصة لإرسال صفحات القرآن...", options=options)
 
     async def callback(self, interaction: discord.Interaction):
         if not interaction.user.guild_permissions.administrator:
-            return await interaction.response.send_message("❌ هذا الأمر للمسؤولين فقط!", ephemeral=True)
+            return await interaction.response.send_message("❌ هذا الخيار للمسؤولين فقط!", ephemeral=True)
         
         save_channel(interaction.guild.id, self.values[0])
-        await interaction.response.send_message(f"✅ تم ضبط القناة بنجاح! سيتم إرسال الورد في <#{self.values[0]}>", ephemeral=True)
+        await interaction.response.send_message(f"✅ تم بنجاح! الصور ستُرسل في: <#{self.values[0]}>", ephemeral=True)
 
-# أزرار التفعيل للأعضاء
 class QuranControlView(View):
     def __init__(self, channels=None):
         super().__init__(timeout=None)
@@ -107,6 +105,30 @@ class QuranControlView(View):
             await interaction.response.send_message("🔕 تم إلغاء اشتراكك.", ephemeral=True)
         else:
             await interaction.response.send_message("⚠️ أنت غير مشترك أصلاً.", ephemeral=True)
+
+    @discord.ui.button(label="🧪 تجربة الإرسال", style=discord.ButtonStyle.blurple, custom_id="test_btn")
+    async def test_send(self, interaction: discord.Interaction, button: Button):
+        if not interaction.user.guild_permissions.administrator:
+            return await interaction.response.send_message("❌ للمسؤولين فقط!", ephemeral=True)
+        
+        channels = load_channels()
+        c_id = channels.get(str(interaction.guild.id))
+        
+        if not c_id:
+            return await interaction.response.send_message("⚠️ من فضلك اختر القناة أولاً من القائمة أعلاه.", ephemeral=True)
+        
+        target_channel = bot.get_channel(int(c_id))
+        if target_channel:
+            start_p = get_last_page()
+            await interaction.response.send_message(f"🔄 جاري إرسال تجربة إلى <#{c_id}>...", ephemeral=True)
+            await target_channel.send(f"🧪 **تجربة نظام الورد في القناة المختارة (صفحة {start_p})**")
+            
+            image_folder = "images"
+            for filename in os.listdir(image_folder):
+                if any(int(n) == start_p for n in re.findall(r'\d+', filename)):
+                    await target_channel.send(file=discord.File(os.path.join(image_folder, filename)))
+        else:
+            await interaction.response.send_message("❌ تعذر العثور على القناة المختارة. تأكد من صلاحيات البوت.", ephemeral=True)
 
 # --- 4. المهمة التلقائية ---
 @tasks.loop(seconds=35)
@@ -132,7 +154,7 @@ async def check_prayer_time():
                 channel = bot.get_channel(int(c_id))
                 if channel:
                     mentions = " ".join([f"<@{s}>" for s in subs if channel.guild.get_member(int(s))])
-                    await channel.send(f"🕋 **حان الآن موعد أذان {arb} بتوقيت الرياض**\n📖 وردكم الجماعي: من {start_p} إلى {end_p}\n🔔 {mentions}")
+                    await channel.send(f"🕋 **حان الآن موعد أذان {arb} بتوقيت الرياض**\n📖 الورد الجماعي: من {start_p} إلى {end_p}\n🔔 {mentions}")
                     for i in range(start_p, end_p + 1):
                         image_folder = "images"
                         for filename in os.listdir(image_folder):
@@ -147,21 +169,21 @@ async def check_prayer_time():
 @bot.event
 async def on_ready():
     bot.add_view(QuranControlView()) 
-    print(f'✅ البوت يعمل بنظام القوائم المنسدلة')
+    print(f'✅ البوت جاهز - لوحة التحكم تعمل')
     if not check_prayer_time.is_running(): check_prayer_time.start()
 
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def إعدادات(ctx):
-    """إظهار لوحة التحكم لاختيار القناة والتفعيل"""
     channels = ctx.guild.text_channels
     embed = discord.Embed(
         title="⚙️ لوحة تحكم نظام القرآن الكريم",
         description=(
-            "**للمسؤولين:** اختر القناة من القائمة المنسدلة أدناه.\n"
-            "**للأعضاء:** استخدم الأزرار لتفعيل أو إلغاء التنبيهات."
+            "1️⃣ **المسؤول:** اختر من القائمة الروم الذي سيتم إرسال (الصور والمنشن) فيه.\n"
+            "2️⃣ **الأعضاء:** اضغطوا على الأزرار لتفعيل التنبيهات.\n\n"
+            "💡 *يمكنك وضع هذه الرسالة في أي روم تريد (مثلاً روم القوانين)، والصور ستذهب للروم الذي تختاره من القائمة.*"
         ),
-        color=discord.Color.gold()
+        color=discord.Color.blue()
     )
     await ctx.send(embed=embed, view=QuranControlView(channels))
 
