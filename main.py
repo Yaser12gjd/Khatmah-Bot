@@ -1,6 +1,5 @@
 import discord
 from discord.ext import commands, tasks
-from discord.ui import Button, View
 import os
 import re
 import requests
@@ -8,10 +7,10 @@ from datetime import datetime
 from flask import Flask
 from threading import Thread
 
-# --- 1. نظام الحفاظ على استمرارية البوت ---
+# --- 1. نظام الحفاظ على البوت ---
 app = Flask('')
 @app.route('/')
-def home(): return "✅ البوت يعمل - نظام الورد المستمر"
+def home(): return "✅ البوت يعمل - نظام الورد الثابت"
 
 def run():
     port = int(os.environ.get("PORT", 10000))
@@ -20,7 +19,7 @@ def run():
 def keep_alive():
     Thread(target=run).start()
 
-# --- 2. إعدادات البوت وملفات الذاكرة ---
+# --- 2. الإعدادات والذاكرة ---
 intents = discord.Intents.default()
 intents.message_content = True 
 bot = commands.Bot(command_prefix='!', intents=intents)
@@ -72,42 +71,7 @@ def find_image(number):
             return os.path.join(image_folder, filename)
     return None
 
-# --- 4. كلاس الأزرار المتطور ---
-class QuranView(View):
-    def __init__(self, current_page, start_page):
-        super().__init__(timeout=None)
-        self.current_page = current_page
-        self.start_page = start_page
-        self.end_page = min(start_page + 3, 607)
-
-    async def update_msg(self, interaction):
-        path = find_image(self.current_page)
-        if path:
-            subs = get_subs()
-            mentions = " ".join([f"<@{s}>" for s in subs])
-            content = f"📖 ورد الصفحات الحالية (من {self.start_page} إلى {self.end_page})\n✅ أنت الآن في صفحة: **{self.current_page}**\n🔔 {mentions}"
-            await interaction.response.edit_message(
-                content=content,
-                attachments=[discord.File(path)], view=self
-            )
-
-    @discord.ui.button(label="⬅️ السابق", style=discord.ButtonStyle.grey)
-    async def prev(self, interaction, button):
-        if self.current_page > self.start_page:
-            self.current_page -= 1
-            await self.update_msg(interaction)
-        else:
-            await interaction.response.send_message("⚠️ هذه بداية الورد الحالي.", ephemeral=True)
-
-    @discord.ui.button(label="التالي ➡️", style=discord.ButtonStyle.primary)
-    async def next(self, interaction, button):
-        if self.current_page < self.end_page:
-            self.current_page += 1
-            await self.update_msg(interaction)
-        else:
-            await interaction.response.send_message("⚠️ انتهى ورد الـ 4 صفحات لهذا الدور.", ephemeral=True)
-
-# --- 5. فحص وقت الصلاة التلقائي ---
+# --- 4. فحص وقت الصلاة وإرسال الصفحات ثابتة ---
 @tasks.loop(seconds=40)
 async def check_prayer_time():
     now = datetime.now().strftime("%H:%M")
@@ -118,56 +82,47 @@ async def check_prayer_time():
         for eng, arb in prayers.items():
             if now == times[eng]:
                 start_p = get_last_page()
-                image_path = find_image(start_p)
                 subs = get_subs()
                 mentions = " ".join([f"<@{s}>" for s in subs])
                 
                 for guild in bot.guilds:
                     channel = discord.utils.get(guild.text_channels, name="القرآن") or guild.text_channels[0]
-                    if channel and image_path:
+                    if channel:
                         end_p = min(start_p + 3, 607)
-                        content = f"🕋 **حان الآن موعد أذان {arb} بتوقيت الرياض**\n📖 وردكم الآن: **4 صفحات** (من {start_p} إلى {end_p})\n🔔 {mentions}"
-                        await channel.send(content=content, file=discord.File(image_path), view=QuranView(start_p, start_p))
+                        await channel.send(f"🕋 **حان الآن موعد أذان {arb} بتوقيت الرياض**\n📖 وردكم الثابت: من صفحة {start_p} إلى {end_p}\n🔔 {mentions}")
+                        
+                        # إرسال الـ 4 صفحات كملفات تحت بعضها
+                        for i in range(start_p, end_p + 1):
+                            path = find_image(i)
+                            if path:
+                                await channel.send(file=discord.File(path))
                 
                 save_next_start_page(min(start_p + 3, 607))
                 import asyncio
                 await asyncio.sleep(65) 
                 break
 
-# --- 6. الأوامر ---
+# --- 5. الأوامر ---
 @bot.event
 async def on_ready():
-    print(f'✅ البوت جاهز - جرب أمر !تجربة')
+    print(f'✅ البوت يعمل بنظام الصور الثابتة (4 صفحات)')
     if not check_prayer_time.is_running():
         check_prayer_time.start()
 
 @bot.command()
-async def تجربة(ctx):
-    """أمر لتجربة نظام الـ 4 صفحات والمنشن يدوياً"""
-    start_p = get_last_page()
-    image_path = find_image(start_p)
-    if image_path:
-        end_p = min(start_p + 3, 607)
-        subs = get_subs()
-        mentions = " ".join([f"<@{s}>" for s in subs])
-        content = f"🧪 **اختبار تجريبي لنظام الورد (4 صفحات)**\n📖 الورد الحالي يبدأ من: {start_p} إلى {end_p}\n🔔 تنبيه المشتركين: {mentions}"
-        await ctx.send(content=content, file=discord.File(image_path), view=QuranView(start_p, start_p))
-    else:
-        await ctx.send("❌ تعذر العثور على الصفحة الأولى للتجربة.")
-
-@bot.command()
 async def تفعيل(ctx):
     add_sub(ctx.author.id)
-    await ctx.send(f"✅ تم التفعيل لـ {ctx.author.mention}! جرب الآن أمر `!تجربة` لترى كيف سيصلك المنشن.")
+    await ctx.send(f"✅ تم التفعيل! ستصلك الـ 4 صفحات مباشرة مع كل أذان.")
 
 @bot.command()
-async def ترتيب(ctx, number: int):
-    if 4 <= number <= 607:
-        path = find_image(number)
+async def تجربة(ctx):
+    start_p = get_last_page()
+    end_p = min(start_p + 3, 607)
+    await ctx.send(f"🧪 **تجربة إرسال الورد الثابت (من {start_p} إلى {end_p})**")
+    for i in range(start_p, end_p + 1):
+        path = find_image(i)
         if path:
-            subs = get_subs()
-            mentions = " ".join([f"<@{s}>" for s in subs])
-            await ctx.send(content=f"📖 صفحة: **{number}**\n🔔 {mentions}", file=discord.File(path), view=QuranView(number, number))
+            await ctx.send(file=discord.File(path))
 
 @bot.command()
 async def مواقيت(ctx):
