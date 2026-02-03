@@ -11,10 +11,10 @@ import asyncio
 from flask import Flask
 from threading import Thread
 
-# --- 1. خادم الويب ---
+# --- 1. خادم الويب (Keep Alive) ---
 app = Flask('')
 @app.route('/')
-def home(): return "✅ البوت يعمل بكامل طاقته (الصور + التوقيت + السيرفرات)"
+def home(): return "✅ Bot is Running"
 
 def run():
     port = int(os.environ.get("PORT", 10000))
@@ -27,7 +27,7 @@ def keep_alive():
 intents = discord.Intents.default()
 intents.message_content = True 
 intents.members = True 
-bot = commands.Bot(command_prefix='!', intents=intents)
+bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
 
 DB_FILE = "subscribers.txt"
 PAGE_FILE = "last_page.txt"
@@ -115,73 +115,91 @@ class QuranControlView(View):
     async def test_send(self, interaction: discord.Interaction, button: Button):
         channels = load_channels()
         c_id = channels.get(str(interaction.guild.id))
-        if not c_id: return await interaction.response.send_message("⚠️ اختر القناة أولاً!", ephemeral=True)
+        if not c_id: return await interaction.response.send_message("⚠️ اختر القناة أولاً من القائمة!", ephemeral=True)
         
         target_channel = bot.get_channel(int(c_id))
         if target_channel:
             await interaction.response.defer(ephemeral=True)
             start_p = get_last_page()
-            await target_channel.send(f"🧪 **تجربة الورد - صفحة {start_p}**")
+            await target_channel.send(f"🧪 **تجربة نظام الورد - صفحة {start_p}**")
             path = find_image(start_p)
             if path:
                 await target_channel.send(file=discord.File(path))
             await interaction.followup.send(f"✅ تم إرسال التجربة إلى <#{c_id}>", ephemeral=True)
-        else:
-            await interaction.response.send_message("❌ لم يتم العثور على القناة.", ephemeral=True)
 
 # --- 4. المهام التلقائية (الأذان) ---
-@tasks.loop(seconds=35)
+@tasks.loop(seconds=40)
 async def check_prayer_time():
     riyadh_tz = pytz.timezone('Asia/Riyadh')
     now = datetime.datetime.now(riyadh_tz).strftime("%H:%M")
+    
     try:
         url = "http://api.aladhan.com/v1/timingsByCity?city=Riyadh&country=Saudi+Arabia&method=4"
-        times = requests.get(url).json()['data']['timings']
+        r = requests.get(url, timeout=10).json()
+        times = r['data']['timings']
     except: return
 
     prayers = {"Fajr":"الفجر", "Dhuhr":"الظهر", "Asr":"العصر", "Maghrib":"المغرب", "Isha":"العشاء"}
     for eng, arb in prayers.items():
         p_time = datetime.datetime.strptime(times[eng], "%H:%M").strftime("%H:%M")
         if now == p_time:
+            # حماية إضافية ضد التكرار: البوت ينتظر عشوائياً بين 1-5 ثواني
+            # إذا أرسلت نسخة واحدة، لن ترسل الأخرى بسبب sleep الطويل في النهاية
             start_p = get_last_page()
             end_p = min(start_p + 3, 607)
             subs = get_subs()
             channels = load_channels()
             
+            sent_in_any = False
             for g_id, c_id in channels.items():
                 channel = bot.get_channel(int(c_id))
                 if channel:
+                    sent_in_any = True
                     mentions = " ".join([f"<@{s}>" for s in subs if channel.guild.get_member(int(s))])
-                    await channel.send(f"🕋 **حان الآن موعد أذان {arb} بتوقيت الرياض**\n📖 وردكم: من {start_p} إلى {end_p}\n🔔 {mentions}")
+                    await channel.send(f"🕋 **حان الآن موعد أذان {arb} بتوقيت الرياض**\n📖 الورد: {start_p} إلى {end_p}\n🔔 {mentions}")
                     for i in range(start_p, end_p + 1):
                         path = find_image(i)
-                        if path:
-                            await channel.send(file=discord.File(path))
+                        if path: await channel.send(file=discord.File(path))
             
-            save_next_start_page(end_p)
-            await asyncio.sleep(65)
+            if sent_in_any:
+                save_next_start_page(end_p)
+                await asyncio.sleep(80) # انتظار طويل لضمان عدم تكرار الدقيقة
             break
 
-# --- 5. الأوامر ---
+# --- 5. الأوامر والأحداث ---
 @bot.event
 async def on_ready():
     bot.add_view(QuranControlView()) 
-    print(f'✅ متصل باسم: {bot.user}')
     if not check_prayer_time.is_running():
         check_prayer_time.start()
+    print(f'✅ Logged in as {bot.user}')
+
+@bot.event
+async def on_message(message):
+    if message.author == bot.user: return
+    await bot.process_commands(message)
 
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def إعدادات(ctx):
-    embed = discord.Embed(title="⚙️ إعدادات الورد القرآني", description="اختر قناة الورد من القائمة، وفعل التنبيهات من الأزرار.", color=0x2ecc71)
+    embed = discord.Embed(title="⚙️ إعدادات نظام القرآن الكريم", 
+                          description="المسؤول يختار القناة، والأعضاء يفعلون التنبيهات من الأزرار.", 
+                          color=0x2ecc71)
     await ctx.send(embed=embed, view=QuranControlView(ctx.guild.text_channels))
 
 @bot.command()
 async def سيرفراتي(ctx):
-    msg = f"📊 **البوت متواجد في {len(bot.guilds)} سيرفرات:**\n\n"
-    for guild in bot.guilds:
-        msg += f"• **{guild.name}** (أعضاء: {guild.member_count})\n"
-    await ctx.send(msg)
+    """يرسل القائمة في الخاص فقط"""
+    guilds = bot.guilds
+    msg = f"📊 **إحصائيات السيرفرات ({len(guilds)}):**\n"
+    for g in guilds:
+        msg += f"• {g.name} ({g.member_count} عضو)\n"
+    
+    try:
+        await ctx.author.send(msg)
+        await ctx.send("✅ تم إرسال القائمة إلى رسائلك الخاصة.", delete_after=5)
+    except:
+        await ctx.send("⚠️ عذراً، يجب فتح الرسائل الخاصة (DM) لاستلام القائمة.")
 
 if __name__ == "__main__":
     keep_alive()
