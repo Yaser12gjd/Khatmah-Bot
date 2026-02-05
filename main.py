@@ -59,13 +59,14 @@ def save_next_start_page(last_sent):
 def find_image(number):
     image_folder = "images"
     if not os.path.exists(image_folder): return None
+    if not os.path.exists(image_folder): return None
     for filename in os.listdir(image_folder):
         nums = re.findall(r'\d+', filename)
         if any(int(n) == number for n in nums):
             return os.path.join(image_folder, filename)
     return None
 
-# --- 3. واجهة التحكم (لوحة الإعدادات) ---
+# --- 3. واجهة التحكم ---
 class ChannelSelect(Select):
     def __init__(self, channels):
         options = [discord.SelectOption(label=c.name, value=str(c.id)) for c in channels[:25]]
@@ -88,8 +89,11 @@ class QuranControlView(View):
         role = discord.utils.get(interaction.guild.roles, name=ROLE_NAME)
         if not role:
             return await interaction.response.send_message(f"⚠️ رتبة '{ROLE_NAME}' غير موجودة، اكتب !إعدادات لإنشائها.", ephemeral=True)
-        await interaction.user.add_roles(role)
-        await interaction.response.send_message(f"✅ تم منحك رتبة {ROLE_NAME} بنجاح!", ephemeral=True)
+        try:
+            await interaction.user.add_roles(role)
+            await interaction.response.send_message(f"✅ تم منحك رتبة {ROLE_NAME} بنجاح!", ephemeral=True)
+        except:
+            await interaction.response.send_message("❌ فشل منح الرتبة، تأكد أن رتبة البوت أعلى من رتبة ختمة.", ephemeral=True)
 
     @discord.ui.button(label="🔕 إلغاء التنبيه", style=discord.ButtonStyle.gray, custom_id="unsub_role_btn")
     async def unsubscribe(self, interaction: discord.Interaction, button: Button):
@@ -115,7 +119,7 @@ class QuranControlView(View):
             if path: await target_channel.send(file=discord.File(path))
             await interaction.followup.send("✅ تمت التجربة!", ephemeral=True)
 
-# --- 4. المهمة التلقائية (الأذان) ---
+# --- 4. المهمة التلقائية ---
 @tasks.loop(seconds=50)
 async def check_prayer_time():
     tz = pytz.timezone('Asia/Riyadh')
@@ -131,7 +135,6 @@ async def check_prayer_time():
             start_p = get_last_page()
             end_p = min(start_p + 3, 607)
             channels = load_channels()
-            
             worked = False
             for g_id, c_id in channels.items():
                 channel = bot.get_channel(int(c_id))
@@ -143,10 +146,9 @@ async def check_prayer_time():
                     for i in range(start_p, end_p + 1):
                         p = find_image(i)
                         if p: await channel.send(file=discord.File(p))
-            
             if worked:
                 save_next_start_page(end_p)
-                await asyncio.sleep(100) # منع التكرار في نفس الدقيقة
+                await asyncio.sleep(100)
             break
 
 # --- 5. الأحداث والأوامر ---
@@ -158,4 +160,11 @@ async def on_ready():
 
 @bot.command()
 @commands.has_permissions(administrator=True)
-async
+async def إعدادات(ctx):
+    role = discord.utils.get(ctx.guild.roles, name=ROLE_NAME)
+    if not role:
+        try:
+            role = await ctx.guild.create_role(name=ROLE_NAME, color=discord.Color.gold(), mentionable=True)
+            await ctx.send(f"✅ تم إنشاء رتبة **{ROLE_NAME}**.")
+        except:
+            await ctx.send("❌ يرجى رفع رتبة البوت
