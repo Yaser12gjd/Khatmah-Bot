@@ -59,7 +59,6 @@ def save_next_start_page(last_sent):
 def find_image(number):
     image_folder = "images"
     if not os.path.exists(image_folder): return None
-    if not os.path.exists(image_folder): return None
     for filename in os.listdir(image_folder):
         nums = re.findall(r'\d+', filename)
         if any(int(n) == number for n in nums):
@@ -109,7 +108,6 @@ class QuranControlView(View):
         channels = load_channels()
         c_id = channels.get(str(interaction.guild.id))
         if not c_id: return await interaction.response.send_message("⚠️ اختر القناة أولاً!", ephemeral=True)
-        
         target_channel = bot.get_channel(int(c_id))
         if target_channel:
             await interaction.response.defer(ephemeral=True)
@@ -128,7 +126,6 @@ async def check_prayer_time():
         url = "http://api.aladhan.com/v1/timingsByCity?city=Riyadh&country=Saudi+Arabia&method=4"
         times = requests.get(url, timeout=10).json()['data']['timings']
     except: return
-
     prayers = {"Fajr":"الفجر", "Dhuhr":"الظهر", "Asr":"العصر", "Maghrib":"المغرب", "Isha":"العشاء"}
     for eng, arb in prayers.items():
         if now == datetime.datetime.strptime(times[eng], "%H:%M").strftime("%H:%M"):
@@ -167,4 +164,26 @@ async def إعدادات(ctx):
             role = await ctx.guild.create_role(name=ROLE_NAME, color=discord.Color.gold(), mentionable=True)
             await ctx.send(f"✅ تم إنشاء رتبة **{ROLE_NAME}**.")
         except:
-            await ctx.send("❌ يرجى رفع رتبة البوت
+            await ctx.send("❌ يرجى رفع رتبة البوت ومنحه صلاحية Manage Roles.")
+    embed = discord.Embed(title="⚙️ لوحة تحكم الورد القرآني", description="اختر القناة وفعل التنبيهات بالأسفل.", color=0x2ecc71)
+    await ctx.send(embed=embed, view=QuranControlView(ctx.guild.text_channels))
+
+@bot.command()
+async def سيرفراتي(ctx):
+    try: await ctx.message.delete()
+    except: pass
+    msg = f"📊 السيرفرات: {len(bot.guilds)}\n"
+    for g in bot.guilds: msg += f"• {g.name} ({g.member_count})\n"
+    try:
+        await ctx.author.send(msg)
+        await ctx.send("✅ تفقد الخاص.", delete_after=5)
+    except:
+        await ctx.send("⚠️ الخاص مغلق.", delete_after=5)
+
+if __name__ == "__main__":
+    keep_alive()
+    token = os.environ.get('DISCORD_TOKEN')
+    if token:
+        bot.run(token)
+    else:
+        print("❌ خطأ: التوكن غير موجود")
