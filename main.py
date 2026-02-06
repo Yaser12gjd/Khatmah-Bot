@@ -11,13 +11,11 @@ import asyncio
 from flask import Flask
 from threading import Thread
 
-# --- 1. خادم الويب لبقاء البوت حياً (Keep Alive) ---
 app = Flask('')
 @app.route('/')
 def home(): return "✅ البوت يعمل بنظام الورد والأذان"
 
 def run():
-    # Render يطلب تشغيل السيرفر على بورت 10000 افتراضياً
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
@@ -25,7 +23,6 @@ def keep_alive():
     t = Thread(target=run)
     t.start()
 
-# --- 2. إعدادات البوت والذاكرة ---
 intents = discord.Intents.default()
 intents.message_content = True 
 intents.members = True 
@@ -67,7 +64,6 @@ def find_image(number):
             return os.path.join(image_folder, filename)
     return None
 
-# --- 3. واجهة التحكم (القائمة والأزرار) ---
 class ChannelSelect(Select):
     def __init__(self, channels):
         options = [discord.SelectOption(label=c.name[:25], value=str(c.id)) for c in channels[:25]]
@@ -105,13 +101,14 @@ class QuranControlView(View):
         await interaction.response.defer(ephemeral=True)
         chan = bot.get_channel(int(c_id))
         if chan:
+            role = discord.utils.get(interaction.guild.roles, name=ROLE_NAME)
+            mention = role.mention if role else f"@{ROLE_NAME}"
             page = get_last_page()
             path = find_image(page)
-            await chan.send(f"🧪 تجربة الورد - صفحة {page}")
+            await chan.send(f"🔔 {mention}\n🧪 تجربة الورد - صفحة {page}")
             if path: await chan.send(file=discord.File(path))
             await interaction.followup.send("✅ تمت التجربة!", ephemeral=True)
 
-# --- 4. المهمة التلقائية (الأذان) ---
 @tasks.loop(minutes=1)
 async def check_prayer_time():
     tz = pytz.timezone('Asia/Riyadh')
@@ -141,7 +138,6 @@ async def check_prayer_time():
             await asyncio.sleep(61)
             break
 
-# --- 5. الأحداث والأوامر ---
 @bot.event
 async def on_ready():
     print(f'✅ البوت متصل الآن: {bot.user}')
@@ -159,18 +155,10 @@ async def إعدادات(ctx):
             await ctx.send(f"✅ تم إنشاء رتبة **{ROLE_NAME}**.")
         except:
             await ctx.send("❌ فشل إنشاء الرتبة، ارفع رتبة البوت للأعلى.")
-            
     embed = discord.Embed(title="⚙️ لوحة تحكم الورد القرآني", description="اختر القناة من القائمة وفعل التنبيهات.", color=0x2ecc71)
     await ctx.send(embed=embed, view=QuranControlView(ctx.guild.text_channels))
 
-# --- تشغيل البوت ---
 if __name__ == "__main__":
     keep_alive()
     token = os.environ.get('DISCORD_TOKEN')
-    if token:
-        try:
-            bot.run(token)
-        except Exception as e:
-            print(f"❌ خطأ: {e}")
-    else:
-        print("❌ خطأ: لم يتم العثور على التوكن!")
+    bot.run(token)
