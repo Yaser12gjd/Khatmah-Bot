@@ -65,7 +65,7 @@ def find_image(number):
             return os.path.join(image_folder, filename)
     return None
 
-# --- 3. واجهة التحكم (القائمة والأزرار) ---
+# --- 3. واجهة التحكم ---
 class ChannelSelect(Select):
     def __init__(self, channels):
         options = [discord.SelectOption(label=c.name[:25], value=str(c.id)) for c in channels[:25]]
@@ -90,15 +90,15 @@ class QuranControlView(View):
             return await interaction.response.send_message(f"⚠️ رتبة '{ROLE_NAME}' غير موجودة، اكتب !إعدادات أولاً.", ephemeral=True)
         try:
             await interaction.user.add_roles(role)
-            await interaction.response.send_message(f"✅ تم منحك رتبة {ROLE_NAME} لتصلك تنبيهات الورد!", ephemeral=True)
+            await interaction.response.send_message(f"✅ تم منحك رتبة {ROLE_NAME}!", ephemeral=True)
         except:
-            await interaction.response.send_message("❌ فشل منح الرتبة. تأكد أن رتبة البوت في الإعدادات أعلى من رتبة ختمة.", ephemeral=True)
+            await interaction.response.send_message("❌ فشل منح الرتبة. ارفع رتبة البوت فوق رتبة ختمة.", ephemeral=True)
 
     @discord.ui.button(label="🧪 تجربة الإرسال", style=discord.ButtonStyle.blurple, custom_id="test_btn")
     async def test(self, interaction: discord.Interaction, button: Button):
         channels = load_channels()
         c_id = channels.get(str(interaction.guild.id))
-        if not c_id: return await interaction.response.send_message("⚠️ حدد القناة أولاً من القائمة!", ephemeral=True)
+        if not c_id: return await interaction.response.send_message("⚠️ حدد القناة أولاً!", ephemeral=True)
         
         await interaction.response.defer(ephemeral=True)
         chan = bot.get_channel(int(c_id))
@@ -108,12 +108,11 @@ class QuranControlView(View):
             page = get_last_page()
             path = find_image(page)
             
-            await chan.send(f"🔔 {mention}\n📖 **تجربة إرسال الورد**\n📄 رقم الصفحة الحالية في النظام: **{page}**")
-            if path: 
-                await chan.send(file=discord.File(path))
-            await interaction.followup.send("✅ تمت التجربة وظهر المنشن برقم الصفحة!", ephemeral=True)
+            await chan.send(f"🔔 {mention}\n📖 **تجربة إرسال الورد**\n📄 رقم الصفحة الحالية: **{page}**")
+            if path: await chan.send(file=discord.File(path))
+            await interaction.followup.send("✅ تمت التجربة!", ephemeral=True)
 
-# --- 4. نظام الأذان التلقائي ---
+# --- 4. نظام الأذان ---
 @tasks.loop(minutes=1)
 async def check_prayer_time():
     tz = pytz.timezone('Asia/Riyadh')
@@ -126,9 +125,7 @@ async def check_prayer_time():
     except: return
 
     prayers = {"Fajr":"الفجر", "Dhuhr":"الظهر", "Asr":"العصر", "Maghrib":"المغرب", "Isha":"العشاء"}
-    
     for eng, arb in prayers.items():
-        # التأكد من مطابقة الوقت
         p_time = datetime.datetime.strptime(times[eng], "%H:%M").strftime("%H:%M")
         if now == p_time:
             start_p = get_last_page()
@@ -140,7 +137,7 @@ async def check_prayer_time():
                 if channel:
                     role = discord.utils.get(channel.guild.roles, name=ROLE_NAME)
                     mention = role.mention if role else f"@{ROLE_NAME}"
-                    await channel.send(f"🕋 **حان الآن موعد أذان {arb} بتوقيت الرياض**\n🔔 {mention}\n📖 وردكم الآن من صفحة **{start_p}** إلى **{end_p}**")
+                    await channel.send(f"🕋 **حان موعد أذان {arb}**\n🔔 {mention}\n📖 الورد من صفحة **{start_p}** إلى **{end_p}**")
                     for i in range(start_p, end_p + 1):
                         p = find_image(i)
                         if p: await channel.send(file=discord.File(p))
@@ -148,13 +145,13 @@ async def check_prayer_time():
             next_start = end_p + 1
             if next_start > 607: next_start = 4
             save_page(next_start)
-            await asyncio.sleep(65) # منع التكرار في نفس الدقيقة
+            await asyncio.sleep(65)
             break
 
-# --- 5. الأوامر ---
+# --- 5. الأحداث والأوامر ---
 @bot.event
 async def on_ready():
-    print(f'✅ البوت أونلاين باسم: {bot.user}')
+    print(f'✅ البوت أونلاين: {bot.user}')
     bot.add_view(QuranControlView())
     if not check_prayer_time.is_running():
         check_prayer_time.start()
@@ -164,38 +161,22 @@ async def on_ready():
 async def إعدادات(ctx):
     role = discord.utils.get(ctx.guild.roles, name=ROLE_NAME)
     if not role:
-        try:
-            role = await ctx.guild.create_role(name=ROLE_NAME, color=discord.Color.gold(), mentionable=True)
-            await ctx.send(f"✅ تم إنشاء رتبة **{ROLE_NAME}**.")
+        try: await ctx.guild.create_role(name=ROLE_NAME, color=discord.Color.gold(), mentionable=True)
         except: pass
-            
     embed = discord.Embed(title="⚙️ لوحة تحكم بوت ختمة", color=0x2ecc71)
-    embed.description = "1. اختر القناة المخصصة للورد من القائمة.\n2. اطلب من الأعضاء ضغط زر التنبيهات.\n3. سيتم الإرسال تلقائياً مع الأذان."
     await ctx.send(embed=embed, view=QuranControlView(ctx.guild.text_channels))
 
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def تصفير(ctx):
     save_page(4)
-    await ctx.send("🔄 **تمت إعادة ضبط الورد!**\nسيبدأ البوت من **الصفحة الأولى (سورة البقرة)** عند الموعد القادم.")
+    await ctx.send("🔄 **تمت إعادة ضبط الورد لجميع السيرفرات!**")
 
 @bot.command()
 async def سيرفراتي(ctx):
-    # متاح فقط لصاحب البوت أو المسؤولين لمتابعة الانتشار
-    if ctx.author.guild_permissions.administrator:
-        guilds = bot.guilds
-        msg = f"📊 البوت موجود حالياً في **{len(guilds)}** سيرفر.\n"
-        await ctx.send(msg)
+    # 1. حذف رسالة العضو فوراً لضمان الخصوصية في السيرفر
+    try: await ctx.message.delete()
+    except: pass
 
-@bot.command()
-async def فحص(ctx):
-    await ctx.send(f"✅ البوت متصل واستجابة الشبكة ممتازة. الصفحة القادمة: {get_last_page()}")
-
-# --- 6. التشغيل النهائي ---
-if __name__ == "__main__":
-    keep_alive()
-    token = os.environ.get('DISCORD_TOKEN')
-    if token:
-        bot.run(token)
-    else:
-        print("❌ خطأ: لم يتم العثور على DISCORD_TOKEN في المتغيرات البيئية!")
+    # 2. التحقق من الصلاحية (للمسؤولين فقط)
+    if not ctx.author.guild_permissions.
