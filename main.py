@@ -11,12 +11,13 @@ import asyncio
 from flask import Flask
 from threading import Thread
 
-# --- 1. خادم الويب (Keep Alive) ---
+# --- 1. خادم الويب لبقاء البوت حياً (Keep Alive) ---
 app = Flask('')
 @app.route('/')
-def home(): return "البوت يعمل بنظام الرتب والأذان"
+def home(): return "✅ البوت يعمل بنظام الورد والأذان"
 
 def run():
+    # Render يطلب تشغيل السيرفر على بورت 10000 افتراضياً
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
@@ -24,9 +25,7 @@ def keep_alive():
     t = Thread(target=run)
     t.start()
 
-# --- 2. إعدادات البوت والملفات ---
-print("--- [بداية عملية التشغيل] ---")
-
+# --- 2. إعدادات البوت والذاكرة ---
 intents = discord.Intents.default()
 intents.message_content = True 
 intents.members = True 
@@ -61,24 +60,22 @@ def save_next_start_page(last_sent):
 
 def find_image(number):
     image_folder = "images"
-    if not os.path.exists(image_folder): 
-        print(f"⚠️ تحذير: مجلد {image_folder} غير موجود!")
-        return None
+    if not os.path.exists(image_folder): return None
     for filename in os.listdir(image_folder):
         nums = re.findall(r'\d+', filename)
         if any(int(n) == number for n in nums):
             return os.path.join(image_folder, filename)
     return None
 
-# --- 3. واجهة التحكم (View & Select) ---
+# --- 3. واجهة التحكم (القائمة والأزرار) ---
 class ChannelSelect(Select):
     def __init__(self, channels):
         options = [discord.SelectOption(label=c.name[:25], value=str(c.id)) for c in channels[:25]]
-        super().__init__(placeholder="اختر القناة المخصصة للورد...", options=options)
+        super().__init__(placeholder="اختر قناة الورد القرآني...", options=options)
 
     async def callback(self, interaction: discord.Interaction):
         if not interaction.user.guild_permissions.administrator:
-            return await interaction.response.send_message("❌ هذا الأمر للمسؤولين فقط!", ephemeral=True)
+            return await interaction.response.send_message("❌ للمسؤولين فقط!", ephemeral=True)
         save_channel(interaction.guild.id, self.values[0])
         await interaction.response.send_message(f"✅ تم ضبط القناة بنجاح!", ephemeral=True)
 
@@ -97,68 +94,60 @@ class QuranControlView(View):
             await interaction.user.add_roles(role)
             await interaction.response.send_message(f"✅ تم منحك رتبة {ROLE_NAME}!", ephemeral=True)
         except:
-            await interaction.response.send_message("❌ فشل منح الرتبة. تأكد من صلاحيات البوت.", ephemeral=True)
+            await interaction.response.send_message("❌ فشل منح الرتبة، تأكد أن رتبة البوت أعلى من رتبة ختمة.", ephemeral=True)
 
-    @discord.ui.button(label="🧪 تجربة الإرسال", style=discord.ButtonStyle.blurple, custom_id="test_btn")
+    @discord.ui.button(label="🧪 تجربة", style=discord.ButtonStyle.blurple, custom_id="test_btn")
     async def test(self, interaction: discord.Interaction, button: Button):
         channels = load_channels()
         c_id = channels.get(str(interaction.guild.id))
-        if not c_id: return await interaction.response.send_message("⚠️ حدد القناة أولاً من القائمة!", ephemeral=True)
+        if not c_id: return await interaction.response.send_message("⚠️ اختر القناة أولاً!", ephemeral=True)
         
         await interaction.response.defer(ephemeral=True)
         chan = bot.get_channel(int(c_id))
         if chan:
             page = get_last_page()
             path = find_image(page)
-            await chan.send(f"📖 تجربة إرسال الورد - صفحة {page}")
+            await chan.send(f"🧪 تجربة الورد - صفحة {page}")
             if path: await chan.send(file=discord.File(path))
-            await interaction.followup.send("✅ تمت التجربة بنجاح!", ephemeral=True)
+            await interaction.followup.send("✅ تمت التجربة!", ephemeral=True)
 
-# --- 4. نظام الأذان التلقائي ---
-@tasks.loop(seconds=60)
-async def quran_task():
+# --- 4. المهمة التلقائية (الأذان) ---
+@tasks.loop(minutes=1)
+async def check_prayer_time():
     tz = pytz.timezone('Asia/Riyadh')
     now = datetime.datetime.now(tz).strftime("%H:%M")
-    
     try:
         url = "http://api.aladhan.com/v1/timingsByCity?city=Riyadh&country=Saudi+Arabia&method=4"
         res = requests.get(url, timeout=10).json()
-        timings = res['data']['timings']
-    except Exception as e:
-        print(f"⚠️ خطأ في جلب أوقات الأذان: {e}")
-        return
+        times = res['data']['timings']
+    except: return
 
-    prayer_names = {"Fajr":"الفجر", "Dhuhr":"الظهر", "Asr":"العصر", "Maghrib":"المغرب", "Isha":"العشاء"}
-    
-    for eng, arb in prayer_names.items():
-        if now == timings[eng]:
-            print(f"🕋 حان وقت أذان {arb}، جاري إرسال الورد...")
+    prayers = {"Fajr":"الفجر", "Dhuhr":"الظهر", "Asr":"العصر", "Maghrib":"المغرب", "Isha":"العشاء"}
+    for eng, arb in prayers.items():
+        if now == datetime.datetime.strptime(times[eng], "%H:%M").strftime("%H:%M"):
             start_p = get_last_page()
             end_p = min(start_p + 3, 607)
             channels = load_channels()
-            
             for g_id, c_id in channels.items():
                 channel = bot.get_channel(int(c_id))
                 if channel:
                     role = discord.utils.get(channel.guild.roles, name=ROLE_NAME)
                     mention = role.mention if role else f"@{ROLE_NAME}"
-                    await channel.send(f"🕋 **موعد أذان {arb}**\n📖 الورد الحالي: {start_p} إلى {end_p}\n🔔 {mention}")
+                    await channel.send(f"🕋 موعد أذان {arb}\n📖 الورد: {start_p}-{end_p}\n🔔 {mention}")
                     for i in range(start_p, end_p + 1):
                         p = find_image(i)
                         if p: await channel.send(file=discord.File(p))
-            
             save_next_start_page(end_p)
-            await asyncio.sleep(65) # تجنب التكرار
+            await asyncio.sleep(61)
             break
 
 # --- 5. الأحداث والأوامر ---
 @bot.event
 async def on_ready():
-    print(f'✅ نجح الاتصال! البوت الآن أونلاين باسم: {bot.user}')
+    print(f'✅ البوت متصل الآن: {bot.user}')
     bot.add_view(QuranControlView())
-    if not quran_task.is_running():
-        quran_task.start()
-        print("⏰ تم تشغيل نظام الأذان التلقائي.")
+    if not check_prayer_time.is_running():
+        check_prayer_time.start()
 
 @bot.command()
 @commands.has_permissions(administrator=True)
@@ -171,19 +160,17 @@ async def إعدادات(ctx):
         except:
             await ctx.send("❌ فشل إنشاء الرتبة، ارفع رتبة البوت للأعلى.")
             
-    embed = discord.Embed(title="⚙️ إعدادات بوت الورد القرآني", color=0x2ecc71)
-    embed.description = "1. اختر القناة من القائمة.\n2. اطلب من الأعضاء تفعيل التنبيهات.\n3. سيتم الإرسال مع كل أذان (توقيت الرياض)."
+    embed = discord.Embed(title="⚙️ لوحة تحكم الورد القرآني", description="اختر القناة من القائمة وفعل التنبيهات.", color=0x2ecc71)
     await ctx.send(embed=embed, view=QuranControlView(ctx.guild.text_channels))
 
-# --- التشغيل النهائي ---
+# --- تشغيل البوت ---
 if __name__ == "__main__":
     keep_alive()
     token = os.environ.get('DISCORD_TOKEN')
-    if not token:
-        print("❌ خطأ: لم يتم العثور على DISCORD_TOKEN في إعدادات Render!")
-    else:
-        print("📡 جاري محاولة تسجيل الدخول إلى ديسكورد...")
+    if token:
         try:
             bot.run(token)
         except Exception as e:
-            print(f"❌ خطأ أثناء تشغيل البوت: {e}")
+            print(f"❌ خطأ: {e}")
+    else:
+        print("❌ خطأ: لم يتم العثور على التوكن!")
