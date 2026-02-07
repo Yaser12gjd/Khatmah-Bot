@@ -15,7 +15,7 @@ from threading import Thread
 app = Flask('')
 @app.route('/')
 def home(): 
-    return "✅ بوت ختمة يعمل ومستعد لرمضان - الرابط نشط"
+    return "✅ بوت ختمة يعمل بنجاح ومستعد لرمضان"
 
 def run():
     port = int(os.environ.get("PORT", 10000))
@@ -35,7 +35,6 @@ CHANNELS_FILE = "channels.json"
 PAGE_FILE = "last_page.txt"
 ROLE_NAME = "ختمة"
 
-# وظائف إدارة البيانات
 def load_channels():
     if not os.path.exists(CHANNELS_FILE): return {}
     try:
@@ -73,9 +72,9 @@ class ChannelSelect(Select):
 
     async def callback(self, interaction: discord.Interaction):
         if not interaction.user.guild_permissions.administrator:
-            return await interaction.response.send_message("❌ هذا الأمر للمسؤولين فقط!", ephemeral=True)
+            return await interaction.response.send_message("❌ للمسؤولين فقط!", ephemeral=True)
         save_channel(interaction.guild.id, self.values[0])
-        await interaction.response.send_message(f"✅ تم ضبط القناة بنجاح للورد اليومي!", ephemeral=True)
+        await interaction.response.send_message(f"✅ تم ضبط القناة بنجاح!", ephemeral=True)
 
 class QuranControlView(View):
     def __init__(self, channels=None):
@@ -87,12 +86,12 @@ class QuranControlView(View):
     async def subscribe(self, interaction: discord.Interaction, button: Button):
         role = discord.utils.get(interaction.guild.roles, name=ROLE_NAME)
         if not role:
-            return await interaction.response.send_message(f"⚠️ رتبة '{ROLE_NAME}' غير موجودة، اكتب !إعدادات أولاً.", ephemeral=True)
+            return await interaction.response.send_message(f"⚠️ رتبة '{ROLE_NAME}' غير موجودة.", ephemeral=True)
         try:
             await interaction.user.add_roles(role)
-            await interaction.response.send_message(f"✅ تم منحك رتبة {ROLE_NAME}!", ephemeral=True)
+            await interaction.response.send_message(f"✅ تم تفعيل تنبيهاتك!", ephemeral=True)
         except:
-            await interaction.response.send_message("❌ فشل منح الرتبة. ارفع رتبة البوت فوق رتبة ختمة.", ephemeral=True)
+            await interaction.response.send_message("❌ ارفع رتبة البوت فوق رتبة ختمة في الإعدادات.", ephemeral=True)
 
     @discord.ui.button(label="🧪 تجربة الإرسال", style=discord.ButtonStyle.blurple, custom_id="test_btn")
     async def test(self, interaction: discord.Interaction, button: Button):
@@ -107,22 +106,22 @@ class QuranControlView(View):
             mention = role.mention if role else f"@{ROLE_NAME}"
             page = get_last_page()
             path = find_image(page)
-            
-            await chan.send(f"🔔 {mention}\n📖 **تجربة إرسال الورد**\n📄 رقم الصفحة الحالية: **{page}**")
+            await chan.send(f"🔔 {mention}\n📖 **تجربة الورد** - صفحة: {page}")
             if path: await chan.send(file=discord.File(path))
             await interaction.followup.send("✅ تمت التجربة!", ephemeral=True)
 
-# --- 4. نظام الأذان ---
+# --- 4. نظام الأذان (الرياض) ---
 @tasks.loop(minutes=1)
 async def check_prayer_time():
     tz = pytz.timezone('Asia/Riyadh')
     now = datetime.datetime.now(tz).strftime("%H:%M")
-    
     try:
         url = "http://api.aladhan.com/v1/timingsByCity?city=Riyadh&country=Saudi+Arabia&method=4"
         res = requests.get(url, timeout=10).json()
         times = res['data']['timings']
-    except: return
+    except Exception as e:
+        print(f"⚠️ خطأ API: {e}")
+        return
 
     prayers = {"Fajr":"الفجر", "Dhuhr":"الظهر", "Asr":"العصر", "Maghrib":"المغرب", "Isha":"العشاء"}
     for eng, arb in prayers.items():
@@ -131,28 +130,26 @@ async def check_prayer_time():
             start_p = get_last_page()
             end_p = min(start_p + 3, 607)
             channels = load_channels()
-            
             for g_id, c_id in channels.items():
                 channel = bot.get_channel(int(c_id))
-                if channel:
+                if channel and channel.guild:
                     role = discord.utils.get(channel.guild.roles, name=ROLE_NAME)
                     mention = role.mention if role else f"@{ROLE_NAME}"
-                    await channel.send(f"🕋 **حان موعد أذان {arb}**\n🔔 {mention}\n📖 الورد من صفحة **{start_p}** إلى **{end_p}**")
+                    await channel.send(f"🕋 **موعد أذان {arb}**\n🔔 {mention}\n📖 الورد: {start_p}-{end_p}")
                     for i in range(start_p, end_p + 1):
                         p = find_image(i)
                         if p: await channel.send(file=discord.File(p))
-            
-            next_start = end_p + 1
-            if next_start > 607: next_start = 4
-            save_page(next_start)
+            save_page(end_p + 1 if end_p < 607 else 4)
             await asyncio.sleep(65)
             break
 
-# --- 5. الأحداث والأوامر ---
+# --- 5. الأوامر ---
 @bot.event
 async def on_ready():
     print(f'✅ البوت أونلاين: {bot.user}')
     bot.add_view(QuranControlView())
+    page = get_last_page()
+    await bot.change_presence(activity=discord.Game(name=f"الورد القادم: صفحة {page}"))
     if not check_prayer_time.is_running():
         check_prayer_time.start()
 
@@ -170,13 +167,28 @@ async def إعدادات(ctx):
 @commands.has_permissions(administrator=True)
 async def تصفير(ctx):
     save_page(4)
-    await ctx.send("🔄 **تمت إعادة ضبط الورد لجميع السيرفرات!**")
+    await ctx.send("🔄 تم إعادة ضبط الورد للصفحة الأولى.")
 
 @bot.command()
 async def سيرفراتي(ctx):
-    # 1. حذف رسالة العضو فوراً لضمان الخصوصية في السيرفر
     try: await ctx.message.delete()
     except: pass
+    if not ctx.author.guild_permissions.administrator: return
 
-    # 2. التحقق من الصلاحية (للمسؤولين فقط)
-    if not ctx.author.guild_permissions.
+    guilds = bot.guilds
+    msg = f"📊 **تقرير سيرفرات بوت ختمة ({len(guilds)} سيرفر):**\n\n"
+    for g in guilds:
+        msg += f"🔹 **{g.name}** | الأعضاء: `{g.member_count}`\n"
+    
+    try:
+        await ctx.author.send(msg)
+    except:
+        await ctx.send(f"❌ {ctx.author.mention} الخاص مغلق!", delete_after=5)
+
+@bot.command()
+async def فحص(ctx):
+    await ctx.send(f"✅ متصل. الصفحة القادمة: {get_last_page()}")
+
+if __name__ == "__main__":
+    keep_alive()
+    bot.run(os.environ.get('DISCORD_TOKEN'))
