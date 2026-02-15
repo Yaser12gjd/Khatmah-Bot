@@ -53,7 +53,6 @@ def get_last_page():
 def save_page(page_num):
     with open(PAGE_FILE, "w") as f: f.write(str(page_num))
 
-# دالة البحث مع معادلة التصحيح (+3)
 def find_image(quran_page):
     image_folder = "images"
     if not os.path.exists(image_folder): return None
@@ -70,10 +69,8 @@ class ChannelSelect(Select):
         super().__init__(placeholder="اختر قناة الورد القرآني...", options=options, custom_id="select_chan_final")
 
     async def callback(self, interaction: discord.Interaction):
-        # مسموح فقط للمودات أو المسؤولين
         if not (interaction.user.guild_permissions.manage_channels or interaction.user.guild_permissions.administrator):
             return await interaction.response.send_message("⚠️ عذراً، هذا الإجراء مخصص للمودات والمسؤولين فقط!", ephemeral=True)
-        
         save_channel(interaction.guild.id, self.values[0])
         await interaction.response.send_message(f"✅ تم ضبط القناة بنجاح!", ephemeral=True)
 
@@ -97,7 +94,6 @@ class QuranControlView(View):
 
     @discord.ui.button(label="🧪 تجربة الإرسال", style=discord.ButtonStyle.blurple, custom_id="test_btn_final")
     async def test(self, interaction: discord.Interaction, button: Button):
-        # تجربة الإرسال للمودات فقط
         if not (interaction.user.guild_permissions.manage_channels or interaction.user.guild_permissions.administrator):
             return await interaction.response.send_message("⚠️ عذراً، تجربة الإرسال للمودات فقط!", ephemeral=True)
 
@@ -116,31 +112,32 @@ class QuranControlView(View):
             if path: await chan.send(file=discord.File(path))
             await interaction.followup.send("✅ تمت التجربة بنجاح!", ephemeral=True)
 
-# --- 4. نظام الأذان التلقائي (مع نظام إعادة المحاولة) ---
-@tasks.loop(seconds=30)
+# --- 4. نظام الأذان التلقائي (المطور لمنع التوقف) ---
+@tasks.loop(seconds=40)
 async def check_prayer_time():
     global last_sent_minute
     tz = pytz.timezone('Asia/Riyadh')
-    now_str = datetime.datetime.now(tz).strftime("%H:%M")
+    now = datetime.datetime.now(tz)
+    now_str = now.strftime("%H:%M")
     
     if now_str == last_sent_minute: return
 
-    # محاولة جلب الأوقات لضمان عدم تعطل الـ API
+    # محاولة جلب الأوقات مع نظام "التجاوز" في حال تعطل الـ API
     times = None
-    for _ in range(3):
-        try:
-            url = "http://api.aladhan.com/v1/timingsByCity?city=Riyadh&country=Saudi+Arabia&method=4"
-            res = requests.get(url, timeout=5).json()
-            times = res['data']['timings']
-            break
-        except:
-            await asyncio.sleep(2)
+    try:
+        url = "http://api.aladhan.com/v1/timingsByCity?city=Riyadh&country=Saudi+Arabia&method=4"
+        res = requests.get(url, timeout=10)
+        if res.status_code == 200:
+            times = res.json()['data']['timings']
+    except Exception as e:
+        print(f"Connection error: {e}")
 
     if not times: return
 
     prayers = {"Fajr":"الفجر", "Dhuhr":"الظهر", "Asr":"العصر", "Maghrib":"المغرب", "Isha":"العشاء"}
     for eng, arb in prayers.items():
         p_time = datetime.datetime.strptime(times[eng], "%H:%M").strftime("%H:%M")
+        
         if now_str == p_time:
             last_sent_minute = now_str
             start_p = get_last_page()
@@ -152,10 +149,12 @@ async def check_prayer_time():
                 if channel:
                     role = discord.utils.get(channel.guild.roles, name=ROLE_NAME)
                     mention = role.mention if role else f"@{ROLE_NAME}"
-                    await channel.send(f"🕋 **حان الآن موعد أذان {arb} بتوقيت الرياض**\n🔔 {mention}\n📖 وردكم من صفحة **{start_p}** إلى **{end_p}**")
-                    for i in range(start_p, end_p + 1):
-                        img_path = find_image(i)
-                        if img_path: await channel.send(file=discord.File(img_path))
+                    try:
+                        await channel.send(f"🕋 **حان الآن موعد أذان {arb} بتوقيت الرياض**\n🔔 {mention}\n📖 وردكم من صفحة **{start_p}** إلى **{end_p}**")
+                        for i in range(start_p, end_p + 1):
+                            img_path = find_image(i)
+                            if img_path: await channel.send(file=discord.File(img_path))
+                    except: continue
             
             save_page(end_p + 1 if end_p < 604 else 1)
             await bot.change_presence(activity=discord.Game(name=f"الورد القادم: ص {end_p + 1}"))
@@ -178,7 +177,7 @@ async def إعدادات(ctx):
         try: await ctx.guild.create_role(name=ROLE_NAME, color=discord.Color.gold(), mentionable=True)
         except: pass
     embed = discord.Embed(title="⚙️ لوحة تحكم بوت ختمة", color=0x2ecc71)
-    embed.description = "ياسر، يمكنك ضبط القناة هنا (للمودات فقط)."
+    embed.description = "ياسر، تأكد من اختيار القناة لتفعيل الإرسال التلقائي."
     await ctx.send(embed=embed, view=QuranControlView(ctx.guild.text_channels))
 
 @bot.command()
@@ -190,21 +189,18 @@ async def تعديل(ctx, num: int):
 
 @bot.command()
 async def سيرفراتي(ctx):
-    try: await ctx.message.delete()
-    except: pass
     if not ctx.author.guild_permissions.administrator: return
     guilds = bot.guilds
-    msg = f"📊 **قائمة السيرفرات ({len(guilds)}):**\n\n"
-    for g in guilds:
-        msg += f"🔹 **{g.name}** | الأعضاء: `{g.member_count}`\n"
-    try: await ctx.author.send(msg)
-    except: await ctx.send("❌ الخاص مغلق!", delete_after=5)
+    msg = f"📊 **السيرفرات ({len(guilds)}):**\n"
+    for g in guilds: msg += f"🔹 {g.name}\n"
+    await ctx.author.send(msg)
 
 @bot.command()
 async def فحص(ctx):
     tz = pytz.timezone('Asia/Riyadh')
-    now = datetime.datetime.now(tz).strftime("%H:%M:%S")
-    await ctx.send(f"🟢 **البوت يعمل بنجاح (Starter)**\n⏰ توقيت الرياض: `{now}`\n📄 الصفحة القادمة: `{get_last_page()}`\n🖼️ الملف المسحوب: `{get_last_page()+3}`")
+    now_str = datetime.datetime.now(tz).strftime("%H:%M:%S")
+    status = "تعمل ✅" if check_prayer_time.is_running() else "متوقفة ❌"
+    await ctx.send(f"🟢 **حالة البوت:**\n⏰ وقت الرياض: `{now_str}`\n🔄 حلقة الأذان: `{status}`\n📖 الصفحة القادمة: `{get_last_page()}`")
 
 if __name__ == "__main__":
     keep_alive()
