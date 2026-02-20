@@ -5,11 +5,11 @@ import os, json, re, requests, datetime, pytz, asyncio
 from flask import Flask
 from threading import Thread
 
-# --- 1. خادم الويب (لضمان بقاء البوت حياً في Render) ---
+# --- 1. خادم الويب (Keep Alive) ---
 app = Flask('')
 @app.route('/')
 def home(): 
-    return "✅ بوت ختمة الاحترافي (Starter) يعمل بنشاط 24/7"
+    return "✅ بوت ختمة الاحترافي (Starter) جاهز لخدمة ضيوف الرحمن"
 
 def run():
     port = int(os.environ.get("PORT", 10000))
@@ -19,7 +19,7 @@ def keep_alive():
     t = Thread(target=run)
     t.start()
 
-# --- 2. إعدادات البوت الأساسية ---
+# --- 2. إعدادات البوت ---
 intents = discord.Intents.default()
 intents.message_content = True 
 intents.members = True 
@@ -30,7 +30,7 @@ PAGE_FILE = "last_page.txt"
 ROLE_NAME = "ختمة"
 last_sent_minute = "" 
 
-# وظائف إدارة البيانات (تخزين القنوات والصفحات)
+# إدارة البيانات
 def load_channels():
     if not os.path.exists(CHANNELS_FILE): return {}
     try:
@@ -53,11 +53,9 @@ def get_last_page():
 def save_page(page_num):
     with open(PAGE_FILE, "w") as f: f.write(str(page_num))
 
-# دالة البحث عن الصور مع معادلة التصحيح (+3)
 def find_image(quran_page):
     image_folder = "images"
     if not os.path.exists(image_folder): return None
-    # محتوى صفحة 1 موجود في ملف رقم 4
     file_number = quran_page + 3
     for filename in os.listdir(image_folder):
         nums = re.findall(r'\d+', filename)
@@ -65,24 +63,21 @@ def find_image(quran_page):
             return os.path.join(image_folder, filename)
     return None
 
-# --- 3. واجهة التحكم (View) مع حل مشكلة الـ 25 روم ---
+# --- 3. واجهة التحكم المحمية ---
 class ChannelSelect(Select):
     def __init__(self, options):
         super().__init__(placeholder="اختر قناة الورد من القائمة...", options=options, custom_id="select_chan_final")
 
     async def callback(self, interaction: discord.Interaction):
-        # التحقق من صلاحيات المودات
         if not (interaction.user.guild_permissions.manage_channels or interaction.user.guild_permissions.administrator):
             return await interaction.response.send_message("⚠️ عذراً، هذا الإجراء للمودات والمسؤولين فقط!", ephemeral=True)
-        
         save_channel(interaction.guild.id, self.values[0])
-        await interaction.response.send_message(f"✅ تم ضبط قناة الورد بنجاح!", ephemeral=True)
+        await interaction.response.send_message(f"✅ تم ضبط القناة بنجاح!", ephemeral=True)
 
 class QuranControlView(View):
     def __init__(self, channels=None):
         super().__init__(timeout=None)
         if channels:
-            # فلترة القنوات النصية وترتيبها للأحدث وحصرها بـ 25 خياراً فقط
             valid_channels = [c for c in channels if isinstance(c, discord.TextChannel)]
             sorted_channels = sorted(valid_channels, key=lambda x: x.created_at, reverse=True)[:25]
             options = [discord.SelectOption(label=f"# {c.name}"[:25], value=str(c.id)) for c in sorted_channels]
@@ -96,19 +91,17 @@ class QuranControlView(View):
             return await interaction.response.send_message(f"⚠️ رتبة '{ROLE_NAME}' غير موجودة.", ephemeral=True)
         try:
             await interaction.user.add_roles(role)
-            await interaction.response.send_message(f"✅ تم تفعيل تنبيهات الورد لك!", ephemeral=True)
+            await interaction.response.send_message(f"✅ تم تفعيل تنبيهاتك!", ephemeral=True)
         except:
-            await interaction.response.send_message("❌ ارفع رتبة البوت فوق رتبة ختمة لإتمام العملية.", ephemeral=True)
+            await interaction.response.send_message("❌ ارفع رتبة البوت فوق رتبة ختمة.", ephemeral=True)
 
     @discord.ui.button(label="🧪 تجربة الإرسال", style=discord.ButtonStyle.blurple, custom_id="test_btn_final")
     async def test(self, interaction: discord.Interaction, button: Button):
         if not (interaction.user.guild_permissions.manage_channels or interaction.user.guild_permissions.administrator):
-            return await interaction.response.send_message("⚠️ عذراً، التجربة متاحة للمودات فقط!", ephemeral=True)
-
+            return await interaction.response.send_message("⚠️ عذراً، التجربة للمودات فقط!", ephemeral=True)
         channels = load_channels()
         c_id = channels.get(str(interaction.guild.id))
-        if not c_id: return await interaction.response.send_message("⚠️ اختر القناة أولاً من القائمة!", ephemeral=True)
-        
+        if not c_id: return await interaction.response.send_message("⚠️ اختر القناة أولاً!", ephemeral=True)
         await interaction.response.defer(ephemeral=True)
         chan = bot.get_channel(int(c_id))
         if chan:
@@ -116,28 +109,26 @@ class QuranControlView(View):
             mention = role.mention if role else f"@{ROLE_NAME}"
             page = get_last_page()
             path = find_image(page)
-            await chan.send(f"🔔 {mention}\n📖 **تجربة الورد اليومي** - صفحة: {page}")
+            await chan.send(f"🔔 {mention}\n📖 **تجربة الورد** - صفحة: {page}")
             if path: await chan.send(file=discord.File(path))
-            await interaction.followup.send("✅ تمت تجربة الإرسال بنجاح!", ephemeral=True)
+            await interaction.followup.send("✅ تمت التجربة بنجاح!", ephemeral=True)
 
-# --- 4. نظام الأذان التلقائي (مع نظام إعادة المحاولة لثبات الأداء) ---
+# --- 4. نظام الأذان (مع حماية مضاعفة ضد التوقف) ---
 @tasks.loop(seconds=30)
 async def check_prayer_time():
     global last_sent_minute
     tz = pytz.timezone('Asia/Riyadh')
     now_str = datetime.datetime.now(tz).strftime("%H:%M")
-    
     if now_str == last_sent_minute: return
 
     times = None
-    for _ in range(3): # محاولة جلب الوقت 3 مرات لضمان الثبات
-        try:
-            url = "http://api.aladhan.com/v1/timingsByCity?city=Riyadh&country=Saudi+Arabia&method=4"
-            res = requests.get(url, timeout=10).json()
-            times = res['data']['timings']
-            break
-        except:
-            await asyncio.sleep(2)
+    try:
+        url = "http://api.aladhan.com/v1/timingsByCity?city=Riyadh&country=Saudi+Arabia&method=4"
+        res = requests.get(url, timeout=10)
+        if res.status_code == 200:
+            times = res.json()['data']['timings']
+    except Exception as e:
+        print(f"Connection error: {e}")
 
     if not times: return
 
@@ -151,24 +142,28 @@ async def check_prayer_time():
             channels = load_channels()
             
             for g_id, c_id in channels.items():
-                channel = bot.get_channel(int(c_id))
-                if channel:
-                    role = discord.utils.get(channel.guild.roles, name=ROLE_NAME)
-                    mention = role.mention if role else f"@{ROLE_NAME}"
-                    await channel.send(f"🕋 **حان الآن موعد أذان {arb} بتوقيت الرياض**\n🔔 {mention}\n📖 وردكم من صفحة **{start_p}** إلى **{end_p}**")
-                    for i in range(start_p, end_p + 1):
-                        img_path = find_image(i)
-                        if img_path: await channel.send(file=discord.File(img_path))
+                try: 
+                    channel = bot.get_channel(int(c_id))
+                    if channel:
+                        role = discord.utils.get(channel.guild.roles, name=ROLE_NAME)
+                        mention = role.mention if role else f"@{ROLE_NAME}"
+                        await channel.send(f"🕋 **حان الآن موعد أذان {arb} بتوقيت الرياض**\n🔔 {mention}\n📖 وردكم من صفحة **{start_p}** إلى **{end_p}**")
+                        for i in range(start_p, end_p + 1):
+                            img_path = find_image(i)
+                            if img_path: await channel.send(file=discord.File(img_path))
+                except Exception as e:
+                    print(f"Error in guild {g_id}: {e}")
+                    continue
             
             save_page(end_p + 1 if end_p < 604 else 1)
             await bot.change_presence(activity=discord.Game(name=f"الورد القادم: ص {end_p + 1}"))
             break
 
-# --- 5. الأوامر القديمة والمحدثة ---
+# --- 5. الأوامر ---
 @bot.event
 async def on_ready():
-    print(f'✅ البوت يعمل بنجاح: {bot.user}')
-    bot.add_view(QuranControlView()) # تفعيل الأزرار بعد إعادة التشغيل
+    print(f'✅ البوت يعمل بخطة Starter: {bot.user}')
+    bot.add_view(QuranControlView())
     if not check_prayer_time.is_running():
         check_prayer_time.start()
     await bot.change_presence(activity=discord.Game(name=f"الورد القادم: ص {get_last_page()}"))
@@ -180,12 +175,8 @@ async def إعدادات(ctx):
     if not role:
         try: await ctx.guild.create_role(name=ROLE_NAME, color=discord.Color.gold(), mentionable=True)
         except: pass
-    
-    # التعديل: اسم الشخص الذي يكتب الأمر ديناميكياً
     embed = discord.Embed(title="⚙️ لوحة تحكم بوت ختمة", color=0x2ecc71)
-    embed.description = f"أهلاً بك يا {ctx.author.display_name}، يمكنك ضبط القناة هنا (للمودات والمسؤولين)."
-    
-    # التعديل: إرسال قنوات السيرفر للتعامل مع الـ 25 روم
+    embed.description = f"أهلاً بك يا {ctx.author.display_name}، يمكنك ضبط القناة هنا."
     await ctx.send(embed=embed, view=QuranControlView(ctx.guild.channels))
 
 @bot.command()
@@ -193,17 +184,15 @@ async def إعدادات(ctx):
 async def تعديل(ctx, num: int):
     save_page(num)
     await bot.change_presence(activity=discord.Game(name=f"الورد القادم: ص {num}"))
-    await ctx.send(f"✅ تم التعديل يدوياً. الورد القادم سيبدأ من صفحة **{num}**\n(سيسحب البوت ملف رقم {num+3} ليتطابق مع المصحف).")
+    await ctx.send(f"✅ تم التعديل لتبدأ من صفحة **{num}**.")
 
 @bot.command()
 async def سيرفراتي(ctx):
     if not ctx.author.guild_permissions.administrator: return
     guilds = bot.guilds
-    msg = f"📊 **قائمة السيرفرات المتصلة ({len(guilds)}):**\n\n"
-    for g in guilds:
-        msg += f"🔹 **{g.name}** | الأعضاء: `{g.member_count}`\n"
-    try: await ctx.author.send(msg)
-    except: await ctx.send("❌ الخاص مغلق لديك!")
+    msg = f"📊 **السيرفرات ({len(guilds)}):**\n"
+    for g in guilds: msg += f"🔹 {g.name} | `{g.member_count}`\n"
+    await ctx.author.send(msg)
 
 @bot.command()
 async def فحص(ctx):
